@@ -21,8 +21,8 @@ Source1:        %{name}-%{version}-vendor.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 
-BuildRequires:  cargo >= 1.85
-BuildRequires:  rust >= 1.85
+BuildRequires:  cargo >= 1.92
+BuildRequires:  rust >= 1.92
 BuildRequires:  gcc
 BuildRequires:  pkgconfig(gtk4) >= 4.20
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.8
