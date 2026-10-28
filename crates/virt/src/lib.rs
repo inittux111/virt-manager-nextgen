@@ -10,6 +10,7 @@
 
 mod config;
 mod connection;
+mod console;
 mod devices;
 mod domain;
 mod error;
@@ -22,6 +23,7 @@ pub mod units;
 
 pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceConfig};
 pub use connection::{Connection, ConnectionKind, GuestDetails, HostInfo, PoolSummary};
+pub use console::ConsoleStream;
 pub use devices::{DeviceKind, DeviceRef, disk_prefix, list_devices, next_disk_target, replace_device};
 pub use domain::{DomainState, DomainSummary, PowerAction};
 pub use error::{Error, Result};

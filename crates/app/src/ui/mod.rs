@@ -1,5 +1,6 @@
 //! All user interface code.
 
+mod console;
 mod feedback;
 mod hardware;
 mod new_vm;

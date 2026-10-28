@@ -106,8 +106,9 @@ impl VmActions {
             self.enable(name, s.is_active());
         }
         self.enable("save", d.persistent && matches!(s, DomainState::Running | DomainState::Paused));
-        // Arrives with the console milestone.
-        self.enable("console", false);
+        // The console page shows the screen, or the text console if the
+        // machine has no graphical display.
+        self.enable("console", s.is_active());
         self.enable("clone", off && d.persistent);
         self.enable("rename", off && d.persistent);
         self.enable("delete", true);
@@ -201,6 +202,8 @@ pub struct VmButtons {
     console: gtk::Button,
     pause: gtk::Button,
     resume: gtk::Button,
+    /// Whether "Open Console" is offered (not on the console page itself).
+    show_console: std::cell::Cell<bool>,
 }
 
 impl VmButtons {
@@ -224,14 +227,21 @@ impl VmButtons {
         }
         root.append(&power);
         root.append(&more);
-        Self { root, start, console, pause, resume }
+        Self { root, start, console, pause, resume, show_console: std::cell::Cell::new(true) }
+    }
+
+    /// Hides "Open Console" (for the console page itself).
+    pub fn without_console(self) -> Self {
+        self.show_console.set(false);
+        self.console.set_visible(false);
+        self
     }
 
     /// Shows the buttons that fit the VM's state.
     pub fn update(&self, state: DomainState) {
         let off = matches!(state, DomainState::ShutOff | DomainState::Crashed);
         self.start.set_visible(off);
-        self.console.set_visible(!off);
+        self.console.set_visible(!off && self.show_console.get());
         self.pause.set_visible(state == DomainState::Running);
         self.resume.set_visible(matches!(state, DomainState::Paused | DomainState::Suspended));
     }

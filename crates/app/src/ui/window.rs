@@ -49,6 +49,9 @@ struct State {
     pending_select: Option<String>,
     /// A VM page to open once the VM appears (e.g. "customize before install").
     pending_page: Option<(String, VmTab)>,
+    /// A VM whose console opens once it shows as running ("open the
+    /// console when a machine starts").
+    pending_console: Option<String>,
 }
 
 pub struct MainWindow {
@@ -66,6 +69,7 @@ pub struct MainWindow {
     feedback: Feedback,
     nav: adw::NavigationView,
     vm_page: VmPage,
+    console: Rc<super::console::ConsolePage>,
     actions: VmActions,
     job: JobBar,
     search_bar: gtk::SearchBar,
@@ -246,6 +250,8 @@ impl MainWindow {
         });
         let vm_page = VmPage::new(snapshots, hardware);
         nav.add(&vm_page.page);
+        let console = super::console::ConsolePage::new(settings.clone(), feedback.clone());
+        nav.add(&console.page);
         let this = Rc::new(Self {
             window,
             settings,
@@ -261,6 +267,7 @@ impl MainWindow {
             feedback,
             nav,
             vm_page,
+            console,
             actions,
             job,
             search_bar,
@@ -278,6 +285,7 @@ impl MainWindow {
                 timer: None,
                 pending_select: None,
                 pending_page: None,
+                pending_console: None,
             }),
         });
 
@@ -373,6 +381,9 @@ impl MainWindow {
             if let Some(this) = weak.upgrade() {
                 if !this.vm_page_open() {
                     this.vm_page.hardware.leave();
+                }
+                if !this.console_open() {
+                    this.console.leave();
                 }
                 let selected = this.vm_list.selected();
                 this.show_selected(selected.as_deref());
@@ -631,6 +642,17 @@ impl MainWindow {
                 self.vm_list.select(&uuid);
             }
             self.vm_list.ensure_selection();
+            let console = self.state.borrow_mut().pending_console.take();
+            if let Some(uuid) = console {
+                match self.vm_by_uuid(&uuid) {
+                    Some(vm) if vm.state.is_active() => {
+                        self.vm_list.select(&uuid);
+                        self.open_console(&vm);
+                    }
+                    Some(_) => self.state.borrow_mut().pending_console = Some(uuid),
+                    None => {}
+                }
+            }
             let page = self.state.borrow_mut().pending_page.take();
             if let Some((uuid, tab)) = page
                 && let Some(vm) = self.vm_by_uuid(&uuid)
@@ -665,14 +687,29 @@ impl MainWindow {
                 {
                     self.vm_page.show(conn, d, st.host_info.clone());
                 }
+                if self.console_open() && self.console.is_open_for(&d.uuid) {
+                    self.console.update(d);
+                }
             }
             None => {
                 self.content.set_visible_child_name("none");
-                if self.vm_page_open() {
+                if self.vm_page_open() || self.console_open() {
                     // The VM went away (deleted elsewhere).
                     self.nav.pop_to_tag("main");
                 }
             }
+        }
+    }
+
+    fn console_open(&self) -> bool {
+        self.nav.visible_page().and_then(|p| p.tag()).is_some_and(|t| t == super::console::ConsolePage::TAG)
+    }
+
+    fn open_console(self: &Rc<Self>, vm: &DomainSummary) {
+        let Some(conn) = self.current_conn() else { return };
+        self.console.open(conn, vm);
+        if !self.console_open() {
+            self.nav.push_by_tag(super::console::ConsolePage::TAG);
         }
     }
 
@@ -760,12 +797,19 @@ impl MainWindow {
     fn power(self: &Rc<Self>, uuid: String, action: PowerAction) {
         let Some(conn) = self.current_conn() else { return };
         let name = self.domain_name(&uuid);
+        let uuid_for_console = uuid.clone();
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let result = conn.call(move |c| c.power(&uuid, action)).await;
             let Some(this) = weak.upgrade() else { return };
-            if let Err(e) = result {
-                this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message());
+            match result {
+                Err(e) => {
+                    this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message())
+                }
+                Ok(()) if action == PowerAction::Start && this.settings.get().console_autoconnect => {
+                    this.state.borrow_mut().pending_console = Some(uuid_for_console);
+                }
+                Ok(()) => {}
             }
             this.refresh();
         });
@@ -847,7 +891,7 @@ impl MainWindow {
         let Some(conn) = self.current_conn() else { return };
         match action {
             VmAction::Power(p) => self.request_power(uuid, p),
-            VmAction::Console => {}
+            VmAction::Console => self.open_console(&vm),
             VmAction::Hardware => self.open_vm_page(&vm, VmTab::Hardware),
             VmAction::Snapshots => self.open_vm_page(&vm, VmTab::Snapshots),
             VmAction::TakeSnapshot => {

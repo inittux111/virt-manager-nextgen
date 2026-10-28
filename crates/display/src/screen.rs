@@ -47,6 +47,10 @@ pub trait Backend {
     fn button(&self, button: Button, down: bool, buttons: u32, x: i32, y: i32);
     /// Asks the guest to use this resolution (needs guest support).
     fn resize_guest(&self, width: u32, height: u32);
+    /// Whether the guest can follow the window size right now.
+    fn can_resize_guest(&self) -> bool {
+        false
+    }
     /// Closes the connection.
     fn disconnect(&self);
 }
@@ -63,13 +67,16 @@ pub enum Scaling {
 
 /// Where the protocol keeps the current image.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Source {
-    pub data: *const u8,
-    pub width: i32,
-    pub height: i32,
-    pub stride: i32,
-    pub format: gdk::MemoryFormat,
+pub struct Source {
+    pub(crate) data: *const u8,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) stride: i32,
+    pub(crate) format: gdk::MemoryFormat,
 }
+
+type GrabFn = Box<dyn Fn(bool)>;
+type SizeFn = Box<dyn Fn(i32, i32)>;
 
 mod imp {
     use super::*;
@@ -88,8 +95,8 @@ mod imp {
         pub pressed: RefCell<Vec<u32>>,
         pub release_combo: RefCell<Vec<u32>>,
         pub grabbed: Cell<bool>,
-        pub on_grab: RefCell<Option<Box<dyn Fn(bool)>>>,
-        pub on_size: RefCell<Option<Box<dyn Fn(i32, i32)>>>,
+        pub on_grab: RefCell<Option<GrabFn>>,
+        pub on_size: RefCell<Option<SizeFn>>,
     }
 
     impl std::fmt::Debug for GuestScreen {
