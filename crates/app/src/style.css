@@ -38,13 +38,7 @@ chart.cpu { color: var(--accent-color); }
 chart.memory { color: var(--success-color); }
 chart.disk { color: var(--orange-5); }
 chart.network { color: var(--purple-4); }
-
-@media (prefers-color-scheme: dark) {
-  sparkline.disk    { color: var(--orange-2); }
-  sparkline.network { color: var(--purple-2); }
-  chart.disk { color: var(--orange-2); }
-  chart.network { color: var(--purple-2); }
-}
+/* Dark mode: lighter disk/network shades in style-dark.css. */
 
 /* ── Meters ──────────────────────────────────────────────────────────── */
 
@@ -201,8 +195,4 @@ guest-screen:focus-visible { outline: none; }
 .legend-swatch.memory { color: var(--success-color); }
 .legend-swatch.disk { color: var(--orange-5); }
 .legend-swatch.network { color: var(--purple-4); }
-@media (prefers-color-scheme: dark) {
-  .legend-swatch.disk { color: var(--orange-2); }
-  .legend-swatch.network { color: var(--purple-2); }
-}
 .legend-swatch.dashed { background: none; border-top: 2px dashed currentColor; min-height: 0; }

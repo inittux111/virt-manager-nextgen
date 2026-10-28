@@ -14,9 +14,11 @@ libadwaita.
 - CPU, memory, disk and network graphs, and guest details through the
   QEMU guest agent
 
-The app needs **GTK 4.20 or newer and libadwaita 1.8 or newer**. Both
-builds below happen inside a container, so no development packages are
-installed on your computer.
+The app needs **GTK 4.18 or newer and libadwaita 1.7 or newer** (Debian 13
+and newer, Fedora 44 and newer). With GTK 4.20 / libadwaita 1.8 it uses
+GNOME's own Keyboard Shortcuts dialog; with the older versions, its own
+version of it. Both builds below happen inside a container, so no
+development packages are installed on your computer.
 
 ## Fedora: RPM, built in a toolbox
 
@@ -44,8 +46,7 @@ To start the app, open **Virtual Machines** from the app grid, or run
 ## Debian: .deb package, built in a podman container
 
 Needs `podman` on the computer that builds; that computer doesn't have to
-run Debian. The package is for **Debian testing (forky) or newer**:
-Debian 13 (trixie) ships GTK 4.18 and libadwaita 1.7, which are too old.
+run Debian. By default the package is for **Debian 13 (trixie)**.
 
 ```sh
 git clone git@github.com:inittux111/virt-manager-nextgen.git
@@ -53,11 +54,14 @@ cd virt-manager-nextgen
 ./build-deb.sh
 ```
 
-This prepares a Debian testing build container (the first time only),
-builds the committed code in it, and puts the package in `target/debian/`.
-Cargo's download cache is kept in a podman volume called
-`virt-manager-nextgen-cargo`. To build for another Debian release that has
-the new enough libraries, name it: `./build-deb.sh unstable`.
+This prepares a Debian 13 build container (the first time only), builds the
+committed code in it, and puts the package in `target/debian/`. The
+container gets a current Rust through `rustup`, because Debian 13's own
+Rust is too old for the app. Cargo's download cache is kept in a podman
+volume called `virt-manager-nextgen-cargo`.
+
+To build for a newer Debian release, name it: `./build-deb.sh testing`. A
+package only fits the release it was built for, so build one per release.
 
 Copy the package to the Debian machine and install it with:
 
@@ -74,7 +78,7 @@ which `build-rpm.sh` sets.
 To remove the build container image and cache later:
 
 ```sh
-podman rmi localhost/virt-manager-nextgen-debian:testing
+podman rmi localhost/virt-manager-nextgen-debian:trixie
 podman volume rm virt-manager-nextgen-cargo
 ```
 

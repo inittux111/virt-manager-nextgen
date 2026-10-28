@@ -1,0 +1,6 @@
+/* Loaded on top of style.css while the app is dark (application.rs follows
+ * the style manager). A separate sheet rather than @media, which GTK only
+ * understands from 4.20. */
+
+sparkline.disk, chart.disk, .legend-swatch.disk { color: var(--orange-2); }
+sparkline.network, chart.network, .legend-swatch.network { color: var(--purple-2); }
