@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.1.2
+Version:        0.1.3
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -89,6 +89,10 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Wed Oct 28 2026 Maarten van der Rijst <github@feedmebits.nl> - 0.1.3-1
+- Simplify the power result handling
+- Open consoles only when asked; double-click opens one
+
 * Wed Oct 28 2026 Maarten van der Rijst <github@feedmebits.nl> - 0.1.2-1
 - Remember the window; drop the libguestfs switch
 - Document maintenance checks and Fedora upgrades
