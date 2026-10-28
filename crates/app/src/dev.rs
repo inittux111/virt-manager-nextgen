@@ -7,11 +7,20 @@ use gtk::{glib, graphene};
 
 /// If `VMNG_SCREENSHOT=<file.png>` is set, renders `window` to that file
 /// after a few seconds and quits. Used to review the UI in different themes.
+/// Called again for a window opened later (e.g. a console), that window is
+/// captured instead.
 pub fn maybe_screenshot(window: &impl IsA<gtk::Widget>) {
+    thread_local! {
+        static TARGET: std::cell::RefCell<Option<gtk::Widget>> = const { std::cell::RefCell::new(None) };
+    }
     let Some(path) = std::env::var_os("VMNG_SCREENSHOT") else { return };
+    let first = TARGET.with(|t| t.replace(Some(window.clone().upcast())).is_none());
+    if !first {
+        return;
+    }
     let delay = std::env::var("VMNG_SCREENSHOT_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(6);
-    let window = window.clone().upcast::<gtk::Widget>();
     glib::timeout_add_local_once(Duration::from_secs(delay), move || {
+        let Some(window) = TARGET.with(|t| t.borrow().clone()) else { return };
         // `VMNG_DEV_SHOT_POPOVER=1`: capture the open popup menu instead
         // (it is a separate surface, not part of the window's picture).
         let widget = std::env::var_os("VMNG_DEV_SHOT_POPOVER")
