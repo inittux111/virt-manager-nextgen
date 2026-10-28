@@ -12,3 +12,6 @@ pub const TRAY_ICON: &str = "io.github.inittux111.VirtManagerNextgen-symbolic";
 /// copy has in the system icon theme.
 #[cfg(debug_assertions)]
 pub const DEV_ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/icons");
+/// The tray host looks up unthemed icons there (it has no `index.theme`).
+#[cfg(debug_assertions)]
+pub const DEV_TRAY_ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/icons/hicolor/symbolic/apps");
