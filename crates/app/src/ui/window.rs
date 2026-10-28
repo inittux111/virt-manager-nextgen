@@ -14,7 +14,7 @@ use vmng_virt::{CloneDiskMode, ConnectionKind, DomainSummary, GuestDetails, Host
 use super::console::ConsoleWindow;
 use super::feedback::Feedback;
 use super::snapshots::{SnapshotsView, take_snapshot_dialog};
-use super::title_menu::{ConnStatus, TitleMenu, View, connection_name};
+use super::views::{ConnStatus, View, connection_name};
 use super::vm_actions::{VmAction, VmActions};
 use super::vm_details::VmDetails;
 use super::vm_dialogs::{clone_dialog, delete_dialog, rename_dialog};
@@ -89,7 +89,6 @@ struct State {
 pub struct MainWindow {
     pub window: adw::ApplicationWindow,
     settings: Settings,
-    title_menu: TitleMenu,
     views: adw::ViewStack,
     machines: gtk::Stack,
     error_page: adw::StatusPage,
@@ -179,9 +178,7 @@ impl MainWindow {
         }
 
         // Header.
-        // (The title menu's state still drives the chrome; it is no longer
-        // shown: views are header tabs, connections are in the main menu.)
-        let title_menu = TitleMenu::new();
+        // Views are header tabs; the connection is chosen in the main menu.
         let views = adw::ViewStack::builder().hhomogeneous(false).vexpand(true).enable_transitions(true).build();
         let switcher = adw::ViewSwitcher::builder().stack(&views).policy(adw::ViewSwitcherPolicy::Wide).build();
         let header = adw::HeaderBar::builder().title_widget(&switcher).build();
@@ -364,7 +361,6 @@ impl MainWindow {
         let this = Rc::new(Self {
             window,
             settings,
-            title_menu,
             views,
             machines,
             error_page,
@@ -525,19 +521,6 @@ impl MainWindow {
 
     fn wire(self: &Rc<Self>, search_entry: &gtk::SearchEntry, retry: &gtk::Button) {
         let weak = Rc::downgrade(self);
-        self.title_menu.connect_view_selected(move |view| {
-            if let Some(this) = weak.upgrade() {
-                this.set_view(view);
-            }
-        });
-        let weak = Rc::downgrade(self);
-        self.title_menu.connect_connection_selected(move |kind| {
-            if let Some(this) = weak.upgrade() {
-                this.switch_connection(kind);
-            }
-        });
-
-        let weak = Rc::downgrade(self);
         self.vm_list.connect_selected(move |uuid| {
             if let Some(this) = weak.upgrade() {
                 this.show_selected(uuid);
@@ -687,25 +670,22 @@ impl MainWindow {
         }
     }
 
-    /// Updates the title, menu and Machines page to the connection state.
+    /// Updates the list header, connection menu and Machines page to the
+    /// connection state.
     fn update_chrome(&self) {
-        let (view, current, failure) = {
+        let (current, failure) = {
             let st = self.state.borrow();
             let failure = match st.conns.get(&st.current) {
                 Some(Slot::Failed(msg)) => Some(msg.clone()),
                 _ => None,
             };
-            (st.view, st.current.clone(), failure)
+            (st.current.clone(), failure)
         };
         let status = self.status_of(&current);
-        self.title_menu.set_current(view, &current, status);
         self.vm_list.set_connection(&format!("QEMU/KVM · {}", connection_name(&current)));
         if let Some(a) = self.window.lookup_action("connection").and_downcast::<gio::SimpleAction>() {
             let id = if current == ConnectionKind::Session { "session" } else { "system" };
             a.set_state(&id.to_variant());
-        }
-        for kind in super::title_menu::CONNECTIONS {
-            self.title_menu.set_connection_status(&kind, self.status_of(&kind));
         }
         let name = connection_name(&current);
         let has_data = !self.state.borrow().domains.is_empty() || self.vm_list_loaded();
@@ -1144,7 +1124,7 @@ impl MainWindow {
             }
         }
         if let Ok(view) = std::env::var("VMNG_DEV_VIEW") {
-            let view = super::title_menu::View::ALL.into_iter().find(|v| v.id() == view);
+            let view = View::ALL.into_iter().find(|v| v.id() == view);
             if let Some(view) = view {
                 self.set_view_later(view);
             }
