@@ -137,6 +137,46 @@ pub fn power_menu() -> gio::Menu {
     menu
 }
 
+/// A menu item that disappears when its action isn't possible right now
+/// (e.g. "Pause" on a machine that is shut off).
+fn state_item(label: &str, action: &str) -> gio::MenuItem {
+    let i = item(label, action);
+    i.set_attribute_value("hidden-when", Some(&"action-disabled".to_variant()));
+    i
+}
+
+/// The right-click menu of a VM in the list.
+pub fn context_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    let power = gio::Menu::new();
+    for (label, action) in [
+        ("Start", "vm.start"),
+        ("Resume", "vm.resume"),
+        ("Pause", "vm.pause"),
+        ("Shut Down", "vm.shutdown"),
+        ("Reboot", "vm.reboot"),
+        ("Force Off", "vm.force-off"),
+    ] {
+        power.append_item(&state_item(label, action));
+    }
+    menu.append_section(None, &power);
+    let open = gio::Menu::new();
+    open.append_item(&item("Open Console", "vm.console"));
+    open.append_item(&item("Settings…", "vm.hardware"));
+    open.append_item(&item("Snapshots", "vm.snapshots"));
+    open.append_item(&item("Take Snapshot…", "vm.take-snapshot"));
+    menu.append_section(None, &open);
+    let manage = gio::Menu::new();
+    manage.append_item(&item("Clone…", "vm.clone"));
+    manage.append_item(&item("Rename…", "vm.rename"));
+    manage.append_item(&state_item("Discard Saved State", "vm.discard-saved"));
+    menu.append_section(None, &manage);
+    let danger = gio::Menu::new();
+    danger.append_item(&item("Delete…", "vm.delete"));
+    menu.append_section(None, &danger);
+    menu
+}
+
 /// The "more actions" menu.
 pub fn more_menu() -> gio::Menu {
     let menu = gio::Menu::new();

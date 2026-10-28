@@ -20,6 +20,12 @@ pub fn logo_key(d: &DomainSummary) -> Option<&'static str> {
     d.config.os_id.as_deref().and_then(osdb::logo_key)
 }
 
+impl Drop for Row {
+    fn drop(&mut self) {
+        self.menu.unparent();
+    }
+}
+
 /// Width of the list column in pixels.
 const LIST_WIDTH: i32 = 340;
 
@@ -30,6 +36,7 @@ struct Row {
     status: StatusLabel,
     start: gtk::Button,
     pause: gtk::Button,
+    menu: gtk::PopoverMenu,
     resume: gtk::Button,
     /// Name and state, for search and accessibility.
     search_text: RefCell<String>,
@@ -208,6 +215,47 @@ impl VmList {
         content.append(&revealer);
         let row = gtk::ListBoxRow::builder().child(&content).build();
 
+        // Right-click (or long-press, or the Menu key) selects the machine
+        // and opens its menu; the vm.* actions then act on it.
+        let menu = gtk::PopoverMenu::from_model(Some(&super::vm_actions::context_menu()));
+        menu.set_parent(&row);
+        menu.set_has_arrow(false);
+        menu.set_halign(gtk::Align::Start);
+        let open_menu = {
+            let (row, menu, weak) = (row.clone(), menu.clone(), Rc::downgrade(self));
+            move |x: f64, y: f64| {
+                if let Some(this) = weak.upgrade() {
+                    this.list.select_row(Some(&row));
+                }
+                menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                menu.popup();
+            }
+        };
+        let click = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_SECONDARY).build();
+        let open = open_menu.clone();
+        click.connect_pressed(move |g, _, x, y| {
+            g.set_state(gtk::EventSequenceState::Claimed);
+            open(x, y);
+        });
+        row.add_controller(click);
+        let long_press = gtk::GestureLongPress::builder().touch_only(true).build();
+        let open = open_menu.clone();
+        long_press.connect_pressed(move |_, x, y| open(x, y));
+        row.add_controller(long_press);
+        let keys = gtk::EventControllerKey::new();
+        let r = row.clone();
+        keys.connect_key_pressed(move |_, key, _, mods| {
+            let menu_key = key == gtk::gdk::Key::Menu
+                || (key == gtk::gdk::Key::F10 && mods.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+            if menu_key {
+                open_menu(f64::from(r.width()) / 2.0, f64::from(r.height()) / 2.0);
+                gtk::glib::Propagation::Stop
+            } else {
+                gtk::glib::Propagation::Proceed
+            }
+        });
+        row.add_controller(keys);
+
         let motion = gtk::EventControllerMotion::new();
         let r = revealer.clone();
         motion.connect_enter(move |_, _, _| r.set_reveal_child(true));
@@ -233,7 +281,7 @@ impl VmList {
             });
         }
 
-        Rc::new(Row { row, logo, name, status, start, pause, resume, search_text: RefCell::default() })
+        Rc::new(Row { row, logo, name, status, start, pause, menu, resume, search_text: RefCell::default() })
     }
 
     /// Updates the list to match `domains`, reusing rows by UUID.
