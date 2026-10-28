@@ -63,6 +63,9 @@ pub struct HardwareView {
     apply: gtk::Button,
     /// Right-click menu of the device list.
     menu: gtk::PopoverMenu,
+    menu_model: gio::Menu,
+    /// `hw.remove`, disabled for devices that can't be removed.
+    remove_action: RefCell<Option<gio::SimpleAction>>,
     work: Rc<RefCell<Element>>,
     state: RefCell<HwState>,
     feedback: Feedback,
@@ -153,8 +156,8 @@ impl HardwareView {
         let root = gtk::Overlay::builder().child(&stack).build();
         root.add_overlay(&apply_bar);
 
+        // Filled for the device each time it opens (see `popup_menu`).
         let menu_model = gio::Menu::new();
-        menu_model.append(Some("Remove…"), Some("hw.remove"));
         let menu = gtk::PopoverMenu::from_model(Some(&menu_model));
         // Parented to the column, not the list: a list removes all of its
         // children when it is refilled, which a popover must survive.
@@ -174,6 +177,8 @@ impl HardwareView {
             apply_bar,
             apply,
             menu,
+            menu_model,
+            remove_action: RefCell::default(),
             work: Rc::default(),
             state: RefCell::default(),
             feedback,
@@ -221,35 +226,62 @@ impl HardwareView {
         });
         let actions = gio::SimpleActionGroup::new();
         actions.add_action(&remove_action);
+        for (name, f) in [
+            ("add", Self::add_hardware as fn(&Rc<Self>)),
+            ("eject", Self::eject_selected),
+            ("connect-cable", |this: &Rc<Self>| this.set_cable(true)),
+            ("disconnect-cable", |this: &Rc<Self>| this.set_cable(false)),
+        ] {
+            let a = gio::SimpleAction::new(name, None);
+            let weak = Rc::downgrade(&this);
+            a.connect_activate(move |_, _| {
+                if let Some(this) = weak.upgrade() {
+                    f(&this);
+                }
+            });
+            actions.add_action(&a);
+        }
+        this.remove_action.replace(Some(remove_action.clone()));
         this.root.insert_action_group("hw", Some(&actions));
         let click = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_SECONDARY).build();
         let weak = Rc::downgrade(&this);
-        let action = remove_action.clone();
         click.connect_pressed(move |g, _, x, y| {
             let Some(this) = weak.upgrade() else { return };
             let Some(row) = this.list.row_at_y(y as i32) else { return };
             g.set_state(gtk::EventSequenceState::Claimed);
-            this.list.select_row(Some(&row));
-            action.set_enabled(this.remove.is_visible());
-            // The click is in list coordinates; the menu points from the column.
             let point = gtk::graphene::Point::new(x as f32, y as f32);
-            let p = this.menu.parent().and_then(|parent| this.list.compute_point(&parent, &point)).unwrap_or(point);
-            this.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(p.x() as i32, p.y() as i32, 1, 1)));
-            this.menu.popup();
+            let p = this.list.compute_point(&row, &point).unwrap_or(point);
+            this.popup_menu(&row, f64::from(p.x()), f64::from(p.y()));
         });
         this.list.add_controller(click);
         let keys = gtk::EventControllerKey::new();
         let weak = Rc::downgrade(&this);
-        keys.connect_key_pressed(move |_, key, _, _| {
+        keys.connect_key_pressed(move |_, key, _, mods| {
             let Some(this) = weak.upgrade() else { return glib::Propagation::Proceed };
+            let menu_key = key == gtk::gdk::Key::Menu
+                || (key == gtk::gdk::Key::F10 && mods.contains(gtk::gdk::ModifierType::SHIFT_MASK));
             if key == gtk::gdk::Key::Delete && this.remove.is_visible() {
                 this.ask_remove();
+                glib::Propagation::Stop
+            } else if menu_key && let Some(row) = this.list.selected_row() {
+                this.popup_menu(&row, f64::from(row.width()) / 2.0, f64::from(row.height()) / 2.0);
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed
             }
         });
         this.list.add_controller(keys);
+        // Long-press on touch screens opens the menu too.
+        let long_press = gtk::GestureLongPress::builder().touch_only(true).build();
+        let weak = Rc::downgrade(&this);
+        long_press.connect_pressed(move |_, x, y| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(row) = this.list.row_at_y(y as i32) else { return };
+            let point = gtk::graphene::Point::new(x as f32, y as f32);
+            let p = this.list.compute_point(&row, &point).unwrap_or(point);
+            this.popup_menu(&row, f64::from(p.x()), f64::from(p.y()));
+        });
+        this.list.add_controller(long_press);
 
         let weak = Rc::downgrade(&this);
         add_button.connect_clicked(move |_| {
@@ -414,6 +446,12 @@ impl HardwareView {
         if std::env::var_os("VMNG_DEV_HW_REMOVE").is_some() {
             let _ = WidgetExt::activate_action(&self.list, "hw.remove", None);
         }
+        // VMNG_DEV_HW_MENU=1: open the right-click menu on the selected device.
+        if std::env::var_os("VMNG_DEV_HW_MENU").is_some()
+            && let Some(row) = self.list.selected_row()
+        {
+            self.popup_menu(&row, 120.0, 30.0);
+        }
         if std::env::var_os("VMNG_DEV_HW_ADD").is_some() {
             self.add_hardware();
         }
@@ -478,7 +516,7 @@ impl HardwareView {
         let weak = Rc::downgrade(self);
         Rc::new(move |device: Element, message: String| {
             if let Some(this) = weak.upgrade() {
-                this.update_live(index, device, message);
+                this.update_live(index, device, message, false);
             }
         })
     }
@@ -589,8 +627,9 @@ impl HardwareView {
         });
     }
 
-    /// Applies an immediate change (CD, network cable) to one device.
-    fn update_live(self: &Rc<Self>, index: usize, device: Element, message: String) {
+    /// Applies an immediate change (CD, network cable) to one device;
+    /// `reshow` redraws its editor afterwards (for changes made elsewhere).
+    fn update_live(self: &Rc<Self>, index: usize, device: Element, message: String, reshow: bool) {
         let Some((conn, uuid)) = self.conn_uuid() else { return };
         let weak = Rc::downgrade(self);
         let dev = device.clone();
@@ -606,6 +645,9 @@ impl HardwareView {
                     }
                     this.update_labels();
                     this.update_apply_bar();
+                    if reshow {
+                        this.show_editor();
+                    }
                     this.feedback.toast(&if now { message } else { format!("{message} (after a restart)") });
                     (this.on_changed)();
                 }
@@ -615,6 +657,71 @@ impl HardwareView {
                 }
             }
         });
+    }
+
+    /// The selected device in the working copy, with its position.
+    fn selected_device(&self) -> Option<vmng_virt::DeviceRef> {
+        let Some(Item::Device(index)) = self.state.borrow().selected else { return None };
+        list_devices(&self.work.borrow()).into_iter().find(|d| d.index == index)
+    }
+
+    /// Takes the disc out of the selected CD/DVD drive, right away.
+    fn eject_selected(self: &Rc<Self>) {
+        let Some(d) = self.selected_device() else { return };
+        let mut dev = d.element;
+        dev.remove_children(|c| c.name == "source");
+        self.update_live(d.index, dev, "Ejected the disc".into(), true);
+    }
+
+    /// Plugs in or pulls the virtual cable of the selected network card.
+    fn set_cable(self: &Rc<Self>, connected: bool) {
+        let Some(d) = self.selected_device() else { return };
+        let mut dev = d.element;
+        dev.child_or_insert("link").set_attr("state", if connected { "up" } else { "down" });
+        let msg = if connected { "Connected the cable" } else { "Disconnected the cable" };
+        self.update_live(d.index, dev, msg.into(), true);
+    }
+
+    /// Selects `row` and opens the device menu at (`x`, `y`) in the row:
+    /// quick actions for the device, Add Hardware, and Remove (like the
+    /// machine menu: grouped, the destructive item last).
+    fn popup_menu(&self, row: &gtk::ListBoxRow, x: f64, y: f64) {
+        self.list.select_row(Some(row));
+        if let Some(remove) = self.remove_action.borrow().as_ref() {
+            remove.set_enabled(self.remove.is_visible());
+        }
+        let m = &self.menu_model;
+        m.remove_all();
+        let quick = gio::Menu::new();
+        if let Some(d) = self.selected_device() {
+            match d.kind {
+                vmng_virt::DeviceKind::Cdrom if d.element.child("source").is_some() => {
+                    quick.append(Some("Eject Disc"), Some("hw.eject"));
+                }
+                vmng_virt::DeviceKind::Interface => {
+                    if d.element.find_attr("link", "state") == Some("down") {
+                        quick.append(Some("Connect Cable"), Some("hw.connect-cable"));
+                    } else {
+                        quick.append(Some("Disconnect Cable"), Some("hw.disconnect-cable"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if quick.n_items() > 0 {
+            m.append_section(None, &quick);
+        }
+        let add = gio::Menu::new();
+        add.append(Some("Add Hardware…"), Some("hw.add"));
+        m.append_section(None, &add);
+        let danger = gio::Menu::new();
+        danger.append(Some("Remove…"), Some("hw.remove"));
+        m.append_section(None, &danger);
+        // The menu lives on the column (see `new`), so convert the point.
+        let point = gtk::graphene::Point::new(x as f32, y as f32);
+        let p = self.menu.parent().and_then(|parent| row.compute_point(&parent, &point)).unwrap_or(point);
+        self.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(p.x() as i32, p.y() as i32, 1, 1)));
+        self.menu.popup();
     }
 
     fn ask_remove(self: &Rc<Self>) {

@@ -176,6 +176,12 @@ impl VmList {
     pub fn select(&self, uuid: &str) {
         if let Some((_, r)) = self.rows.borrow().iter().find(|(id, _)| id == uuid) {
             self.list.select_row(Some(&r.row));
+            // Debug builds: `VMNG_DEV_VM_MENU=1` opens the right-click menu.
+            #[cfg(debug_assertions)]
+            if std::env::var_os("VMNG_DEV_VM_MENU").is_some() {
+                r.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(120, 30, 1, 1)));
+                r.menu.popup();
+            }
         }
     }
 
