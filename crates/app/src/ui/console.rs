@@ -1,7 +1,7 @@
 //! The console page: the guest's screen (SPICE or VNC) or its text console,
 //! with a floating toolbar for keys, screenshots, scaling and fullscreen.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -84,6 +84,13 @@ pub struct ConsolePage {
     fullscreen: gtk::ToggleButton,
     resize_guest: gtk::ToggleButton,
     osd_screen_tools: gtk::Box,
+    osd: gtk::Box,
+    osd_revealer: gtk::Revealer,
+    caption_revealer: gtk::Revealer,
+    osd_menus: Vec<gtk::MenuButton>,
+    osd_hovered: Cell<bool>,
+    hide_timer: RefCell<Option<glib::SourceId>>,
+    overlay: gtk::Overlay,
     scale_label: adw::ButtonContent,
     state: RefCell<PageState>,
     resize_timer: RefCell<Option<glib::SourceId>>,
@@ -263,9 +270,25 @@ impl ConsolePage {
         stack.add_named(&error_page, Some("error"));
         stack.add_named(&off_page, Some("off"));
 
+        // In fullscreen the toolbar and caption hide themselves and come
+        // back when the pointer touches the top edge (like virt-manager).
+        let osd_revealer = gtk::Revealer::builder()
+            .child(&osd)
+            .reveal_child(true)
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Start)
+            .build();
+        let caption_revealer = gtk::Revealer::builder()
+            .child(&caption)
+            .reveal_child(true)
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::End)
+            .build();
         let overlay = gtk::Overlay::builder().child(&stack).css_classes(["console-area"]).build();
-        overlay.add_overlay(&osd);
-        overlay.add_overlay(&caption);
+        overlay.add_overlay(&osd_revealer);
+        overlay.add_overlay(&caption_revealer);
 
         let toolbar_view = adw::ToolbarView::builder().content(&overlay).build();
         toolbar_view.add_top_bar(&header);
@@ -288,6 +311,13 @@ impl ConsolePage {
             fullscreen,
             resize_guest,
             osd_screen_tools,
+            osd,
+            osd_revealer,
+            caption_revealer,
+            osd_menus: vec![send, scale],
+            osd_hovered: Cell::new(false),
+            hide_timer: RefCell::default(),
+            overlay,
             scale_label,
             state: RefCell::default(),
             resize_timer: RefCell::default(),
@@ -296,6 +326,7 @@ impl ConsolePage {
         });
         this.setup_actions();
         this.wire();
+        this.setup_autohide();
         this
     }
 
@@ -743,7 +774,84 @@ impl ConsolePage {
         window.set_default_size(gw + extra_w.max(0), gh + extra_h.max(0));
     }
 
-    fn set_fullscreen(&self, on: bool) {
+    fn setup_autohide(self: &Rc<Self>) {
+        // Watch the pointer over the whole console without taking events
+        // away from the guest screen.
+        let motion = gtk::EventControllerMotion::new();
+        motion.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(self);
+        motion.connect_motion(move |_, _, y| {
+            if let Some(this) = weak.upgrade()
+                && this.fullscreen.is_active()
+                && y <= 8.0
+            {
+                this.show_osd();
+            }
+        });
+        self.overlay.add_controller(motion);
+
+        let hover = gtk::EventControllerMotion::new();
+        let weak = Rc::downgrade(self);
+        hover.connect_enter(move |_, _, _| {
+            if let Some(this) = weak.upgrade() {
+                this.osd_hovered.set(true);
+                this.cancel_hide();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        hover.connect_leave(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.osd_hovered.set(false);
+                this.schedule_hide();
+            }
+        });
+        self.osd.add_controller(hover);
+        // Closing a menu of the toolbar counts as leaving it.
+        for menu in &self.osd_menus {
+            let weak = Rc::downgrade(self);
+            menu.connect_active_notify(move |m| {
+                if let Some(this) = weak.upgrade()
+                    && !m.is_active()
+                {
+                    this.schedule_hide();
+                }
+            });
+        }
+    }
+
+    fn show_osd(self: &Rc<Self>) {
+        self.osd_revealer.set_reveal_child(true);
+        self.caption_revealer.set_reveal_child(true);
+        self.schedule_hide();
+    }
+
+    fn cancel_hide(&self) {
+        if let Some(id) = self.hide_timer.borrow_mut().take() {
+            id.remove();
+        }
+    }
+
+    /// Hides the toolbar two seconds from now, if still in fullscreen and
+    /// the person isn't using it.
+    fn schedule_hide(self: &Rc<Self>) {
+        self.cancel_hide();
+        if !self.fullscreen.is_active() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(Duration::from_secs(2), move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.hide_timer.replace(None);
+            let menu_open = this.osd_menus.iter().any(gtk::MenuButton::is_active);
+            if this.fullscreen.is_active() && !this.osd_hovered.get() && !menu_open {
+                this.osd_revealer.set_reveal_child(false);
+                this.caption_revealer.set_reveal_child(false);
+            }
+        });
+        self.hide_timer.replace(Some(id));
+    }
+
+    fn set_fullscreen(self: &Rc<Self>, on: bool) {
         let Some(window) = self.page.root().and_downcast::<gtk::Window>() else { return };
         if on {
             window.fullscreen();
@@ -754,6 +862,13 @@ impl ConsolePage {
         self.fullscreen.set_icon_name(if on { "view-restore-symbolic" } else { "view-fullscreen-symbolic" });
         self.fullscreen.set_tooltip_text(Some(if on { "Leave fullscreen" } else { "Fullscreen" }));
         self.apply_scaling();
+        if on {
+            self.show_osd();
+        } else {
+            self.cancel_hide();
+            self.osd_revealer.set_reveal_child(true);
+            self.caption_revealer.set_reveal_child(true);
+        }
     }
 
     /// Saves the current guest image as a PNG file.
@@ -790,7 +905,11 @@ impl ConsolePage {
     /// Debug builds: `VMNG_DEV_CONSOLE_KEYS=<evdev,evdev,…>` types those
     /// keys a second apart after connecting, to test keyboard input.
     #[cfg(debug_assertions)]
-    fn dev_keys(&self) {
+    fn dev_keys(self: &Rc<Self>) {
+        // VMNG_DEV_CONSOLE_FULLSCREEN=1: switch to fullscreen after connecting.
+        if std::env::var_os("VMNG_DEV_CONSOLE_FULLSCREEN").is_some() {
+            self.fullscreen.set_active(true);
+        }
         let Ok(list) = std::env::var("VMNG_DEV_CONSOLE_KEYS") else { return };
         let codes: Vec<u32> = list.split(',').filter_map(|c| c.trim().parse().ok()).collect();
         for (i, code) in codes.into_iter().enumerate() {
