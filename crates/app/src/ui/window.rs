@@ -11,6 +11,7 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 use vmng_virt::{CloneDiskMode, ConnectionKind, DomainSummary, GuestDetails, HostInfo, PowerAction};
 
+use super::console::ConsoleWindow;
 use super::feedback::Feedback;
 use super::snapshots::{SnapshotsView, take_snapshot_dialog};
 use super::title_menu::{ConnStatus, TitleMenu, View, connection_name};
@@ -102,7 +103,8 @@ pub struct MainWindow {
     feedback: Feedback,
     nav: adw::NavigationView,
     vm_page: VmPage,
-    console: Rc<super::console::ConsolePage>,
+    /// Open console windows, by VM UUID.
+    consoles: RefCell<HashMap<String, Rc<ConsoleWindow>>>,
     host_view: Rc<super::host_view::HostView>,
     networks_view: Rc<super::networks_view::NetworksView>,
     storage_view: Rc<super::storage_view::StorageView>,
@@ -322,8 +324,6 @@ impl MainWindow {
         });
         let vm_page = VmPage::new(snapshots, hardware);
         nav.add(&vm_page.page);
-        let console = super::console::ConsolePage::new(settings.clone(), feedback.clone());
-        nav.add(&console.page);
         let this = Rc::new(Self {
             window,
             settings,
@@ -340,7 +340,7 @@ impl MainWindow {
             feedback,
             nav,
             vm_page,
-            console,
+            consoles: RefCell::default(),
             host_view,
             networks_view,
             storage_view,
@@ -396,9 +396,15 @@ impl MainWindow {
         // With a tray icon, closing the window keeps the app running there.
         let weak = Rc::downgrade(&this);
         this.window.connect_close_request(move |w| {
-            if weak.upgrade().is_some_and(|this| this.tray.borrow().is_some()) {
+            let Some(this) = weak.upgrade() else { return glib::Propagation::Proceed };
+            if this.tray.borrow().is_some() {
                 w.set_visible(false);
                 return glib::Propagation::Stop;
+            }
+            // Closing the main window quits, consoles included.
+            let consoles: Vec<_> = this.consoles.borrow().values().cloned().collect();
+            for c in consoles {
+                c.window.close();
             }
             glib::Propagation::Proceed
         });
@@ -506,9 +512,6 @@ impl MainWindow {
             if let Some(this) = weak.upgrade() {
                 if !this.vm_page_open() {
                     this.vm_page.hardware.leave();
-                }
-                if !this.console_open() {
-                    this.console.leave();
                 }
                 let selected = this.vm_list.selected();
                 this.show_selected(selected.as_deref());
@@ -835,6 +838,7 @@ impl MainWindow {
         }
         let selected = self.vm_list.selected();
         self.show_selected(selected.as_deref());
+        self.update_consoles();
         if let Some(uuid) = &selected
             && tick % PREVIEW_POLL_EVERY == 0
         {
@@ -893,13 +897,10 @@ impl MainWindow {
                     self.vm_page.show(conn, d, st.host_info.clone());
                     self.vm_page.performance.update(d, st.monitor.vm(&d.uuid), self.settings.get().stats_interval_secs);
                 }
-                if self.console_open() && self.console.is_open_for(&d.uuid) {
-                    self.console.update(d);
-                }
             }
             None => {
                 self.content.set_visible_child_name("none");
-                if self.vm_page_open() || self.console_open() {
+                if self.vm_page_open() {
                     // The VM went away (deleted elsewhere).
                     self.nav.pop_to_tag("main");
                 }
@@ -907,15 +908,47 @@ impl MainWindow {
         }
     }
 
-    fn console_open(&self) -> bool {
-        self.nav.visible_page().and_then(|p| p.tag()).is_some_and(|t| t == super::console::ConsolePage::TAG)
-    }
-
+    /// Opens `vm`'s console window, or brings it forward if it is open.
     fn open_console(self: &Rc<Self>, vm: &DomainSummary) {
         let Some(conn) = self.current_conn() else { return };
-        self.console.open(conn, vm);
-        if !self.console_open() {
-            self.nav.push_by_tag(super::console::ConsolePage::TAG);
+        let Some(app) = self.window.application().and_downcast::<adw::Application>() else { return };
+        let existing = self.consoles.borrow().get(&vm.uuid).cloned();
+        let console = existing.unwrap_or_else(|| {
+            let weak = Rc::downgrade(self);
+            let console = ConsoleWindow::new(&app, self.settings.clone(), move |uuid, action| {
+                if let Some(this) = weak.upgrade() {
+                    this.vm_action(uuid.to_owned(), action);
+                }
+            });
+            let (weak, uuid) = (Rc::downgrade(self), vm.uuid.clone());
+            console.window.connect_close_request(move |_| {
+                if let Some(this) = weak.upgrade()
+                    && let Some(c) = this.consoles.borrow_mut().remove(&uuid)
+                {
+                    c.leave();
+                }
+                glib::Propagation::Proceed
+            });
+            self.consoles.borrow_mut().insert(vm.uuid.clone(), console.clone());
+            #[cfg(debug_assertions)]
+            crate::dev::maybe_screenshot(&console.window);
+            console
+        });
+        console.open(conn, vm);
+        console.window.present();
+    }
+
+    /// Keeps the open console windows in step with their machines; closes
+    /// those whose machine is gone.
+    fn update_consoles(&self) {
+        let open: Vec<(String, Rc<ConsoleWindow>)> =
+            self.consoles.borrow().iter().map(|(u, c)| (u.clone(), c.clone())).collect();
+        for (uuid, console) in open {
+            match self.vm_by_uuid(&uuid) {
+                Some(vm) => console.update(&vm),
+                None if console.is_on(&self.state.borrow().current) => console.window.close(),
+                None => {}
+            }
         }
     }
 
@@ -1038,7 +1071,7 @@ impl MainWindow {
     /// `VMNG_DEV_ACTION=<action>` (e.g. `vm.snapshots`) activates an action,
     /// so screenshots of deeper screens can be taken unattended.
     #[cfg(debug_assertions)]
-    fn dev_hooks(&self) {
+    fn dev_hooks(self: &Rc<Self>) {
         if let Ok(name) = std::env::var("VMNG_DEV_SELECT") {
             let uuid = self.state.borrow().domains.iter().find(|d| d.config.name == name).map(|d| d.uuid.clone());
             if let Some(uuid) = uuid {
@@ -1050,6 +1083,16 @@ impl MainWindow {
             let view = super::title_menu::View::ALL.into_iter().find(|v| v.id() == view);
             if let Some(view) = view {
                 self.set_view_later(view);
+            }
+        }
+        // VMNG_DEV_CONSOLES=<name>,<name>: open those consoles (several windows).
+        if let Ok(names) = std::env::var("VMNG_DEV_CONSOLES") {
+            let vms: Vec<DomainSummary> = names
+                .split(',')
+                .filter_map(|n| self.state.borrow().domains.iter().find(|d| d.config.name == n.trim()).cloned())
+                .collect();
+            for vm in vms {
+                self.open_console(&vm);
             }
         }
         if let Ok(action) = std::env::var("VMNG_DEV_ACTION") {
@@ -1170,9 +1213,7 @@ impl MainWindow {
             }
             TrayCommand::Power(uuid, action) => self.request_power(uuid, action),
             TrayCommand::Console(uuid) => {
-                self.bring_to_front();
                 if let Some(vm) = self.vm_by_uuid(&uuid) {
-                    self.vm_list.select(&uuid);
                     self.open_console(&vm);
                 }
             }
@@ -1187,6 +1228,11 @@ impl MainWindow {
     fn vm_action(self: &Rc<Self>, uuid: String, action: VmAction) {
         let Some(vm) = self.vm_by_uuid(&uuid) else { return };
         let Some(conn) = self.current_conn() else { return };
+        // Pages and dialogs live in the main window: bring it forward when
+        // they are asked for from a console window.
+        if !matches!(action, VmAction::Power(_) | VmAction::Console | VmAction::SyncTime) {
+            self.bring_to_front();
+        }
         match action {
             VmAction::Power(p) => self.request_power(uuid, p),
             VmAction::Console => self.open_console(&vm),

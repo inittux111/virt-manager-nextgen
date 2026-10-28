@@ -1,5 +1,7 @@
-//! The console page: the guest's screen (SPICE or VNC) or its text console,
-//! with a floating toolbar for keys, screenshots, scaling and fullscreen.
+//! A console window: one machine's screen (SPICE or VNC) or its text
+//! console, with a floating toolbar for keys, screenshots, scaling and
+//! fullscreen. Each machine gets its own window, so several can be open.
+//! The window has its own `vm.*` actions, aimed at its machine.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -15,7 +17,7 @@ use vmng_display::{
 use vmng_virt::{ConsoleStream, DomainSummary};
 
 use super::feedback::Feedback;
-use super::vm_actions::VmButtons;
+use super::vm_actions::{VmAction, VmActions, VmButtons};
 use super::vm_list::{logo_key, os_label, state_text};
 use super::widgets::{OsLogo, StatusLabel, Tone};
 use crate::backend::Conn;
@@ -67,8 +69,10 @@ enum Mode {
     Text,
 }
 
-pub struct ConsolePage {
-    pub page: adw::NavigationPage,
+pub struct ConsoleWindow {
+    pub window: adw::Window,
+    /// The `vm.*` actions of this window, aimed at its machine.
+    actions: VmActions,
     toolbar_view: adw::ToolbarView,
     stack: gtk::Stack,
     screen: GuestScreen,
@@ -110,9 +114,9 @@ struct PageState {
     generation: u32,
 }
 
-impl std::fmt::Debug for ConsolePage {
+impl std::fmt::Debug for ConsoleWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConsolePage").finish_non_exhaustive()
+        f.debug_struct("ConsoleWindow").finish_non_exhaustive()
     }
 }
 
@@ -129,10 +133,9 @@ fn osd_toggle(icon: &str, tooltip: &str) -> gtk::ToggleButton {
     b
 }
 
-impl ConsolePage {
-    pub const TAG: &'static str = "console";
-
-    pub fn new(settings: Settings, feedback: Feedback) -> Rc<Self> {
+impl ConsoleWindow {
+    /// A console window; `on_action` runs the window's `vm.*` actions.
+    pub fn new(app: &adw::Application, settings: Settings, on_action: impl Fn(&str, VmAction) + 'static) -> Rc<Self> {
         // Header: who and how it's doing, plus the usual controls.
         let logo = OsLogo::new(30);
         let name = gtk::Label::builder()
@@ -321,7 +324,21 @@ impl ConsolePage {
         let b = buttons.clone();
         compact.connect_unapply(move |_| b.set_compact(false));
         bin.add_breakpoint(compact);
-        let page = adw::NavigationPage::builder().tag(Self::TAG).title("Console").child(&bin).build();
+        let toasts = adw::ToastOverlay::new();
+        toasts.set_child(Some(&bin));
+        let window = adw::Window::builder()
+            .application(app)
+            .title("Console")
+            .default_width(1024)
+            .default_height(768)
+            .width_request(360)
+            .height_request(300)
+            .content(&toasts)
+            .build();
+        let feedback = Feedback::new(&toasts, &window);
+        let actions = VmActions::new();
+        actions.connect(on_action);
+        window.insert_action_group("vm", Some(&actions.group));
         // F11, unless the guest has the keyboard (then the guest gets it).
         let keys = gtk::ShortcutController::new();
         let f = fullscreen.clone();
@@ -332,10 +349,11 @@ impl ConsolePage {
                 glib::Propagation::Stop
             })),
         ));
-        page.add_controller(keys);
+        window.add_controller(keys);
 
         let this = Rc::new(Self {
-            page,
+            window,
+            actions,
             toolbar_view,
             stack,
             screen,
@@ -428,7 +446,7 @@ impl ConsolePage {
             }
         });
         group.add_action(&reconnect);
-        self.page.insert_action_group("console", Some(&group));
+        self.window.insert_action_group("console", Some(&group));
     }
 
     fn wire(self: &Rc<Self>) {
@@ -533,7 +551,8 @@ impl ConsolePage {
     }
 
     fn update_header(&self, vm: &DomainSummary) {
-        self.page.set_title(&format!("{} – Console", vm.display_name()));
+        self.window.set_title(Some(&format!("{} – Console", vm.display_name())));
+        self.actions.set_target(Some(vm));
         self.logo.set_logo(logo_key(vm));
         self.name.set_label(vm.display_name());
         self.status.set(Tone::of(vm.state), &format!("{} · {}", state_text(vm), os_label(vm)));
@@ -555,6 +574,8 @@ impl ConsolePage {
 
     pub fn leave(&self) {
         self.disconnect();
+        // The window may close while the guest has the keyboard.
+        super::shortcuts::set_app_enabled(true);
         if self.fullscreen.is_active() {
             self.fullscreen.set_active(false);
         }
@@ -816,7 +837,7 @@ impl ConsolePage {
     /// Makes the window just big enough to show the guest 1:1.
     fn fit_window(&self) {
         let Some((gw, gh)) = self.screen.guest_size() else { return };
-        let Some(window) = self.page.root().and_downcast::<gtk::Window>() else { return };
+        let window = self.window.upcast_ref::<gtk::Window>();
         if window.is_maximized() || window.is_fullscreen() {
             window.unmaximize();
         }
@@ -902,7 +923,7 @@ impl ConsolePage {
     }
 
     fn set_fullscreen(self: &Rc<Self>, on: bool) {
-        let Some(window) = self.page.root().and_downcast::<gtk::Window>() else { return };
+        let window = self.window.upcast_ref::<gtk::Window>();
         if on {
             window.fullscreen();
         } else {
@@ -940,7 +961,7 @@ impl ConsolePage {
         if let Some(pictures) = glib::user_special_dir(glib::UserDirectory::Pictures) {
             dialog.set_initial_folder(Some(&gio::File::for_path(pictures)));
         }
-        let window = self.page.root().and_downcast::<gtk::Window>();
+        let window = Some(self.window.clone().upcast::<gtk::Window>());
         let feedback = self.feedback.clone();
         glib::spawn_future_local(async move {
             let Ok(file) = dialog.save_future(window.as_ref()).await else { return };
@@ -970,7 +991,8 @@ impl ConsolePage {
         }
     }
 
-    pub fn is_open_for(&self, uuid: &str) -> bool {
-        self.state.borrow().vm.as_ref().is_some_and(|v| v.uuid == uuid)
+    /// Whether this console's machine lives on connection `kind`.
+    pub fn is_on(&self, kind: &vmng_virt::ConnectionKind) -> bool {
+        self.state.borrow().conn.as_ref().is_some_and(|c| c.kind() == kind)
     }
 }
