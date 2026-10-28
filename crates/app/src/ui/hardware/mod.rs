@@ -119,14 +119,14 @@ impl HardwareView {
         right.append(&head);
         right.append(&editor);
 
-        let content = gtk::Box::builder().spacing(28).css_classes(["page-content"]).margin_bottom(72).build();
-        content.append(&left);
-        content.append(&right);
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .child(&adw::Clamp::builder().maximum_size(1180).child(&content).build())
-            .build();
+        // Room below for the Apply bar.
+        let split = super::widgets::ListDetail::new(&left, &right, 28, false, "Devices", 660.0, |b| {
+            b.set_margin_bottom(72);
+            super::widgets::scrolled_page(b, 1180)
+        });
+        let s = split.clone();
+        list.connect_row_activated(move |_, _| s.show_detail());
+        let scroller = split.root().clone();
         let loading = adw::Spinner::builder().halign(gtk::Align::Center).valign(gtk::Align::Center).build();
         let stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
         stack.add_named(&loading, Some("loading"));
@@ -136,7 +136,9 @@ impl HardwareView {
         let revert = gtk::Button::builder().label("Revert").css_classes(["flat", "pill"]).build();
         let apply = gtk::Button::builder().label("Apply").css_classes(["suggested-action", "pill"]).build();
         let bar = gtk::Box::builder().spacing(12).css_classes(["apply-bar"]).build();
-        bar.append(&gtk::Label::builder().label("You have unsaved changes").margin_start(8).build());
+        bar.append(
+            &gtk::Label::builder().label("You have unsaved changes").wrap(true).xalign(0.0).margin_start(8).build(),
+        );
         bar.append(&revert);
         bar.append(&apply);
         let apply_bar = gtk::Revealer::builder()
@@ -144,6 +146,8 @@ impl HardwareView {
             .halign(gtk::Align::Center)
             .valign(gtk::Align::End)
             .margin_bottom(16)
+            .margin_start(12)
+            .margin_end(12)
             .child(&bar)
             .build();
         let root = gtk::Overlay::builder().child(&stack).build();

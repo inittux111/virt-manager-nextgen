@@ -4,7 +4,7 @@
 use adw::prelude::*;
 use vmng_virt::{DomainState, DomainSummary};
 
-use super::widgets::{Chart, card};
+use super::widgets::{Chart, card, reflow};
 use crate::backend::{HISTORY_LEN, VmLive};
 use crate::format;
 
@@ -79,24 +79,32 @@ impl PerformanceView {
         net.chart.set_format(format::rate);
         net.chart.set_floor(10_000.0);
 
-        let grid = gtk::Grid::builder().row_spacing(16).column_spacing(16).column_homogeneous(true).build();
-        grid.attach(&cpu.root, 0, 0, 1, 1);
-        grid.attach(&memory.root, 1, 0, 1, 1);
-        grid.attach(&disk.root, 0, 1, 1, 1);
-        grid.attach(&net.root, 1, 1, 1, 1);
-        let body = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["page-content"]).build();
-        body.append(&grid);
+        // Two by two, or one column in narrow windows.
+        let body = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(16)
+            .css_classes(["page-content"])
+            .build();
+        let mut rows = Vec::new();
+        for pair in [[&cpu.root, &memory.root], [&disk.root, &net.root]] {
+            let row = gtk::Box::builder().spacing(16).homogeneous(true).build();
+            row.append(pair[0]);
+            row.append(pair[1]);
+            body.append(&row);
+            rows.push(row);
+        }
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .child(&adw::Clamp::builder().maximum_size(1180).child(&body).build())
             .build();
+        let charts = reflow(&scroller, &[&rows[0], &rows[1]], &[], 700.0);
         let off = adw::StatusPage::builder()
             .icon_name("utilities-system-monitor-symbolic")
             .title("The machine isn't running")
             .description("Start it to see how busy it is.")
             .build();
         let root = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
-        root.add_named(&scroller, Some("charts"));
+        root.add_named(&charts, Some("charts"));
         root.add_named(&off, Some("off"));
         Self { root, cpu, memory, disk, net }
     }

@@ -245,6 +245,17 @@ impl VmButtons {
         self
     }
 
+    /// Icon-only Start and Open Console, for narrow windows.
+    pub fn set_compact(&self, compact: bool) {
+        for (button, label) in [(&self.start, "Start"), (&self.console, "Open Console")] {
+            if let Some(content) = button.child().and_downcast::<adw::ButtonContent>() {
+                content.set_label(if compact { "" } else { label });
+            }
+            // The tooltip still names the action.
+            button.set_tooltip_text(compact.then_some(label));
+        }
+    }
+
     /// Shows the buttons that fit the VM's state.
     pub fn update(&self, state: DomainState) {
         let off = matches!(state, DomainState::ShutOff | DomainState::Crashed);

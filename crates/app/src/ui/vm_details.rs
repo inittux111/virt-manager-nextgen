@@ -10,7 +10,7 @@ use vmng_virt::{DiskConfig, DomainState, DomainSummary, Firmware, GuestDetails};
 use super::vm_actions::VmButtons;
 use super::vm_list::{logo_key, os_label, state_text};
 use super::widgets::{
-    Meter, OsLogo, Sparkline, StatusLabel, Tone, boxed_list, card, fact_row, labeled_button, section_heading,
+    Meter, OsLogo, Sparkline, StatusLabel, Tone, boxed_list, card, fact_row, labeled_button, reflow, section_heading,
 };
 use crate::backend::{HISTORY_LEN, VmLive};
 use crate::format;
@@ -60,7 +60,7 @@ impl StatCard {
 type AutostartFn = Rc<dyn Fn(&str, bool)>;
 
 pub struct VmDetails {
-    pub root: gtk::ScrolledWindow,
+    pub root: adw::BreakpointBin,
     uuid: RefCell<Option<String>>,
     logo: OsLogo,
     name: gtk::Label,
@@ -121,9 +121,11 @@ impl VmDetails {
         titles.append(&status.root);
 
         let buttons = VmButtons::new();
+        let identity = gtk::Box::builder().spacing(16).hexpand(true).build();
+        identity.append(&logo);
+        identity.append(&titles);
         let header = gtk::Box::builder().spacing(16).css_classes(["details-header"]).build();
-        header.append(&logo);
-        header.append(&titles);
+        header.append(&identity);
         header.append(&buttons.root);
 
         // Console preview.
@@ -156,11 +158,22 @@ impl VmDetails {
         let memory = StatCard::new("Memory", "memory");
         let disk = StatCard::new("Disk I/O", "disk");
         let net = StatCard::new("Network", "network");
-        let stats = gtk::Grid::builder().row_spacing(10).column_spacing(10).column_homogeneous(true).build();
-        stats.attach(&cpu.root, 0, 0, 1, 1);
-        stats.attach(&memory.root, 1, 0, 1, 1);
-        stats.attach(&disk.root, 0, 1, 1, 1);
-        stats.attach(&net.root, 1, 1, 1, 1);
+        // Two by two, or one column when there's no room.
+        let stats = gtk::FlowBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .homogeneous(true)
+            .min_children_per_line(1)
+            .max_children_per_line(2)
+            .row_spacing(10)
+            .column_spacing(10)
+            .valign(gtk::Align::Start)
+            .build();
+        for card in [&cpu.root, &memory.root, &disk.root, &net.root] {
+            stats.append(card);
+            if let Some(cell) = card.parent() {
+                cell.set_focusable(false);
+            }
+        }
         stats.set_hexpand(true);
 
         let top = gtk::Box::builder().spacing(16).homogeneous(true).build();
@@ -227,11 +240,12 @@ impl VmDetails {
         body.append(&top);
         body.append(&bottom);
         let clamp = adw::Clamp::builder().maximum_size(1100).tightening_threshold(800).child(&body).build();
-        let root = gtk::ScrolledWindow::builder()
+        let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .hexpand(true)
             .child(&clamp)
             .build();
+        let root = reflow(&scroller, &[&header, &top, &bottom], &[&stats], 880.0);
 
         let this = Rc::new(Self {
             root,

@@ -9,7 +9,7 @@ use gtk::glib;
 use vmng_virt::{DomainSummary, Ipv4Config, NetworkDetails, NetworkMode, NetworkSettings, suggest_subnet};
 
 use super::feedback::Feedback;
-use super::widgets::{FormDialog, StatusLabel, Tone, boxed_list, section_heading};
+use super::widgets::{FormDialog, ListDetail, StatusLabel, Tone, boxed_list, scrolled_page, section_heading};
 use crate::backend::Conn;
 
 fn settings_of(d: &NetworkDetails) -> NetworkSettings {
@@ -92,19 +92,38 @@ impl NetworksView {
         head.append(&titles);
         head.append(&toggle);
 
-        let mode_box = gtk::Box::builder().spacing(8).homogeneous(true).build();
+        // Four across, or two by two in narrow columns.
+        let mode_box = gtk::FlowBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .homogeneous(true)
+            .min_children_per_line(2)
+            .max_children_per_line(4)
+            .column_spacing(8)
+            .row_spacing(8)
+            .build();
         let mut modes = Vec::new();
         for (mode, label, desc) in MODES {
             let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(3).build();
             b.append(&gtk::Label::builder().label(label).xalign(0.0).css_classes(["heading"]).build());
             b.append(
-                &gtk::Label::builder().label(desc).xalign(0.0).wrap(true).css_classes(["caption", "dim-label"]).build(),
+                // A short natural width keeps all four cards on one line when they fit.
+                &gtk::Label::builder()
+                    .label(desc)
+                    .xalign(0.0)
+                    .wrap(true)
+                    .max_width_chars(16)
+                    .css_classes(["caption", "dim-label"])
+                    .build(),
             );
             let t = gtk::ToggleButton::builder().child(&b).css_classes(["method-card"]).build();
             if let Some((_, first)) = modes.first() {
                 t.set_group(Some(first));
             }
             mode_box.append(&t);
+            // The toggle itself takes focus, not its FlowBox cell.
+            if let Some(cell) = t.parent() {
+                cell.set_focusable(false);
+            }
             modes.push((mode, t));
         }
         let connection = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).build();
@@ -123,7 +142,13 @@ impl NetworksView {
         let ipv4 = adw::EntryRow::builder().title("Network (address/size)").build();
         let dhcp = adw::SwitchRow::builder().title("Hand out addresses (DHCP)").build();
         let range_row = adw::ActionRow::builder().title("Address range").build();
-        let range = gtk::Label::builder().css_classes(["dim-label"]).build();
+        let range = gtk::Label::builder()
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .justify(gtk::Justification::Right)
+            .xalign(1.0)
+            .css_classes(["dim-label"])
+            .build();
         range_row.add_suffix(&range);
         ipv4_group.add(&ipv4);
         ipv4_group.add(&dhcp);
@@ -162,13 +187,14 @@ impl NetworksView {
         ] {
             right.append(w);
         }
-        let content = gtk::Box::builder().spacing(28).css_classes(["page-content"]).margin_bottom(72).build();
-        content.append(&left);
-        content.append(&right);
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .child(&adw::Clamp::builder().maximum_size(1180).child(&content).build())
-            .build();
+        // Room below for the Apply bar.
+        let split = ListDetail::new(&left, &right, 28, false, "Networks", 880.0, |b| {
+            b.set_margin_bottom(72);
+            scrolled_page(b, 1180)
+        });
+        let s = split.clone();
+        list.connect_row_activated(move |_, _| s.show_detail());
+        let scroller = split.root().clone();
 
         let empty_new = gtk::Button::builder()
             .label("New Network")
@@ -191,7 +217,14 @@ impl NetworksView {
         let revert = gtk::Button::builder().label("Revert").css_classes(["flat", "pill"]).build();
         let apply = gtk::Button::builder().label("Apply").css_classes(["suggested-action", "pill"]).build();
         let bar = gtk::Box::builder().spacing(12).css_classes(["apply-bar"]).build();
-        bar.append(&gtk::Label::builder().label("Changes apply after the network restarts").margin_start(8).build());
+        bar.append(
+            &gtk::Label::builder()
+                .label("Changes apply after the network restarts")
+                .wrap(true)
+                .xalign(0.0)
+                .margin_start(8)
+                .build(),
+        );
         bar.append(&revert);
         bar.append(&apply);
         let apply_bar = gtk::Revealer::builder()
@@ -199,6 +232,8 @@ impl NetworksView {
             .halign(gtk::Align::Center)
             .valign(gtk::Align::End)
             .margin_bottom(16)
+            .margin_start(12)
+            .margin_end(12)
             .child(&bar)
             .build();
         let root = gtk::Overlay::builder().child(&stack).build();

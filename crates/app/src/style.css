@@ -92,6 +92,8 @@ chart.network { color: var(--purple-4); }
 /* ── Pages and long operations ───────────────────────────────────────── */
 
 .page-content { padding: 28px 24px; }
+/* Narrow layouts: the back button above a list item's details. */
+.back-bar { padding: 6px 6px 0; }
 .job-bar { padding: 12px 16px; }
 
 /* ── Snapshot timeline ───────────────────────────────────────────────── */

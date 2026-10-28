@@ -101,9 +101,14 @@ fn setup_actions(app: &adw::Application, settings: &Settings) {
     });
     app.add_action(&prefs);
 
-    app.set_accels_for_action("app.quit", &["<Control>q"]);
-    app.set_accels_for_action("app.preferences", &["<Control>comma"]);
-    app.set_accels_for_action("win.search", &["<Control>f"]);
-    app.set_accels_for_action("win.new-vm", &["<Control>n"]);
-    app.set_accels_for_action("window.close", &["<Control>w"]);
+    let shortcuts = gio::SimpleAction::new("shortcuts", None);
+    let a = app.downgrade();
+    shortcuts.connect_activate(move |_, _| {
+        if let Some(window) = a.upgrade().and_then(|app| app.active_window()) {
+            crate::ui::shortcuts::dialog().present(Some(&window));
+        }
+    });
+    app.add_action(&shortcuts);
+
+    crate::ui::shortcuts::install(app);
 }

@@ -106,13 +106,12 @@ impl SnapshotsView {
         aside.append(&aside_note);
         aside.append(&buttons);
 
-        let content = gtk::Box::builder().spacing(28).css_classes(["page-content"]).build();
-        content.append(&left);
-        content.append(&aside);
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .child(&adw::Clamp::builder().maximum_size(1100).child(&content).build())
-            .build();
+        let split = super::widgets::ListDetail::new(&left, &aside, 28, false, "Snapshots", 700.0, |b| {
+            super::widgets::scrolled_page(b, 1100)
+        });
+        let s = split.clone();
+        list.connect_row_activated(move |_, _| s.show_detail());
+        let scroller = split.root().clone();
 
         let empty_take = gtk::Button::builder()
             .label("Take Snapshot")

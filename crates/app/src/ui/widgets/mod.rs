@@ -1,6 +1,7 @@
 //! Reusable building blocks. Every screen composes these so that the same
 //! idea always looks the same everywhere.
 
+mod adaptive;
 mod chart;
 mod form_dialog;
 mod logo_data;
@@ -9,6 +10,7 @@ mod os_logo;
 mod sparkline;
 mod status;
 
+pub use adaptive::{ListDetail, reflow, scrolled_page};
 pub use chart::Chart;
 pub use form_dialog::FormDialog;
 pub use meter::Meter;

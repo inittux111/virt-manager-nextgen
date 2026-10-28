@@ -88,10 +88,38 @@ impl VmPage {
         header.pack_start(&identity);
         header.pack_end(&buttons.root);
 
+        // Narrow windows move the tabs to the bottom.
+        let bottom = adw::ViewSwitcherBar::builder().stack(&stack).build();
         let toolbar = adw::ToolbarView::builder().content(&stack).build();
         toolbar.add_top_bar(&header);
-        let page = adw::NavigationPage::builder().tag(Self::TAG).title("Machine").child(&toolbar).build();
-        Self { page, stack, logo, name, status, buttons, snapshots, hardware, performance }
+        toolbar.add_bottom_bar(&bottom);
+        let bin = adw::BreakpointBin::builder().width_request(360).height_request(300).child(&toolbar).build();
+        let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            820.0,
+            adw::LengthUnit::Px,
+        ));
+        narrow.add_setter(&switcher, "visible", Some(&false.to_value()));
+        narrow.add_setter(&bottom, "reveal", Some(&true.to_value()));
+        bin.add_breakpoint(narrow);
+        let page = adw::NavigationPage::builder().tag(Self::TAG).title("Machine").child(&bin).build();
+        let this = Self { page, stack, logo, name, status, buttons, snapshots, hardware, performance };
+        // Below this, the header only fits icon-only buttons. (Only one
+        // breakpoint applies at a time, so it repeats the narrow setters.)
+        let compact = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            520.0,
+            adw::LengthUnit::Px,
+        ));
+        compact.add_setter(&switcher, "visible", Some(&false.to_value()));
+        compact.add_setter(&bottom, "reveal", Some(&true.to_value()));
+        compact.add_setter(&this.logo, "visible", Some(&false.to_value()));
+        let b = this.buttons.clone();
+        compact.connect_apply(move |_| b.set_compact(true));
+        let b = this.buttons.clone();
+        compact.connect_unapply(move |_| b.set_compact(false));
+        bin.add_breakpoint(compact);
+        this
     }
 
     pub fn select(&self, tab: VmTab) {
