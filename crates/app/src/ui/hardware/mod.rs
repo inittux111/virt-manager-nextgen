@@ -1,0 +1,652 @@
+//! The Hardware tab: every setting and device of a VM, with an editor for
+//! the selected one. Edits collect in a working copy and are saved together
+//! with Apply (or dropped with Revert).
+
+mod add;
+mod editors;
+mod labels;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use adw::prelude::*;
+use gtk::glib;
+use vmng_virt::{DeviceKind, DomainSummary, HostInfo, list_devices};
+use vmng_xml::Element;
+
+use self::editors::{Bind, Choices, Live, Target};
+use super::feedback::Feedback;
+use crate::backend::Conn;
+use crate::settings::Settings;
+
+/// An entry of the hardware list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Item {
+    CpuMemory,
+    Boot,
+    Device(usize),
+    Xml,
+}
+
+struct Row {
+    item: Item,
+    row: gtk::ListBoxRow,
+    title: gtk::Label,
+    subtitle: gtk::Label,
+}
+
+#[derive(Default)]
+struct HwState {
+    conn: Option<Conn>,
+    uuid: Option<String>,
+    name: String,
+    active: bool,
+    base: Option<Element>,
+    rows: Vec<Row>,
+    selected: Option<Item>,
+    host: Option<HostInfo>,
+    choices: Choices,
+    /// Bumped on every load so late results of an old load are ignored.
+    generation: u32,
+}
+
+pub struct HardwareView {
+    pub root: gtk::Overlay,
+    list: gtk::ListBox,
+    title: gtk::Label,
+    subtitle: gtk::Label,
+    running_note: gtk::Label,
+    remove: gtk::Button,
+    editor: gtk::Box,
+    stack: gtk::Stack,
+    apply_bar: gtk::Revealer,
+    apply: gtk::Button,
+    work: Rc<RefCell<Element>>,
+    state: RefCell<HwState>,
+    feedback: Feedback,
+    settings: Settings,
+    on_changed: Rc<dyn Fn()>,
+}
+
+impl std::fmt::Debug for HardwareView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HardwareView").finish_non_exhaustive()
+    }
+}
+
+impl HardwareView {
+    /// `on_changed` runs after the VM was changed (so the window refreshes).
+    pub fn new(feedback: Feedback, settings: Settings, on_changed: impl Fn() + 'static) -> Rc<Self> {
+        let list = gtk::ListBox::builder().css_classes(["boxed-list", "hardware-list"]).build();
+        list.update_property(&[gtk::accessible::Property::Label("Devices")]);
+        let add_button = super::widgets::labeled_button("list-add-symbolic", "Add Hardware");
+        add_button.set_halign(gtk::Align::Fill);
+        let left = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(12).width_request(300).build();
+        left.append(&list);
+        left.append(&add_button);
+
+        let title = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["title-2"]).build();
+        let subtitle = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["dim-label"]).build();
+        let running_note = gtk::Label::builder()
+            .label("The machine is running: most changes take effect after it restarts.")
+            .xalign(0.0)
+            .wrap(true)
+            .visible(false)
+            .css_classes(["caption", "warning"])
+            .build();
+        let remove = gtk::Button::builder()
+            .label("Remove")
+            .valign(gtk::Align::Center)
+            .css_classes(["destructive-action"])
+            .build();
+        let head_text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).hexpand(true).build();
+        head_text.append(&title);
+        head_text.append(&subtitle);
+        head_text.append(&running_note);
+        let head = gtk::Box::builder().spacing(12).build();
+        head.append(&head_text);
+        head.append(&remove);
+        let editor = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(22).build();
+        let right = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(22).hexpand(true).build();
+        right.append(&head);
+        right.append(&editor);
+
+        let content = gtk::Box::builder().spacing(28).css_classes(["page-content"]).margin_bottom(72).build();
+        content.append(&left);
+        content.append(&right);
+        let scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&adw::Clamp::builder().maximum_size(1180).child(&content).build())
+            .build();
+        let loading = adw::Spinner::builder().halign(gtk::Align::Center).valign(gtk::Align::Center).build();
+        let stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
+        stack.add_named(&loading, Some("loading"));
+        stack.add_named(&scroller, Some("content"));
+
+        // "You have unsaved changes · Revert · Apply"
+        let revert = gtk::Button::builder().label("Revert").css_classes(["flat", "pill"]).build();
+        let apply = gtk::Button::builder().label("Apply").css_classes(["suggested-action", "pill"]).build();
+        let bar = gtk::Box::builder().spacing(12).css_classes(["apply-bar"]).build();
+        bar.append(&gtk::Label::builder().label("You have unsaved changes").margin_start(8).build());
+        bar.append(&revert);
+        bar.append(&apply);
+        let apply_bar = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideUp)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::End)
+            .margin_bottom(16)
+            .child(&bar)
+            .build();
+        let root = gtk::Overlay::builder().child(&stack).build();
+        root.add_overlay(&apply_bar);
+
+        let this = Rc::new(Self {
+            root,
+            list,
+            title,
+            subtitle,
+            running_note,
+            remove,
+            editor,
+            stack,
+            apply_bar,
+            apply,
+            work: Rc::default(),
+            state: RefCell::default(),
+            feedback,
+            settings,
+            on_changed: Rc::new(on_changed),
+        });
+
+        let weak = Rc::downgrade(&this);
+        this.list.connect_row_selected(move |_, row| {
+            let Some(this) = weak.upgrade() else { return };
+            let item = row.and_then(|r| this.state.borrow().rows.iter().find(|x| &x.row == r).map(|x| x.item));
+            if let Some(item) = item
+                && this.state.borrow().selected != Some(item)
+            {
+                this.state.borrow_mut().selected = Some(item);
+                this.show_editor();
+            }
+        });
+        let weak = Rc::downgrade(&this);
+        revert.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.revert();
+            }
+        });
+        let weak = Rc::downgrade(&this);
+        this.apply.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.save();
+            }
+        });
+        let weak = Rc::downgrade(&this);
+        this.remove.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.ask_remove();
+            }
+        });
+        let weak = Rc::downgrade(&this);
+        add_button.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.add_hardware();
+            }
+        });
+        this
+    }
+
+    /// Whether there are edits that have not been applied.
+    pub fn is_dirty(&self) -> bool {
+        self.state.borrow().base.as_ref().is_some_and(|b| *b != *self.work.borrow())
+    }
+
+    /// Shows `vm`. Reloads when it is another VM; keeps unsaved edits
+    /// across the regular refreshes.
+    pub fn set_target(self: &Rc<Self>, conn: Conn, vm: &DomainSummary, host: Option<HostInfo>) {
+        let same = self.state.borrow().uuid.as_deref() == Some(vm.uuid.as_str());
+        {
+            let mut st = self.state.borrow_mut();
+            st.conn = Some(conn);
+            st.active = vm.state.is_active();
+            st.name = vm.config.name.clone();
+            st.host = host;
+        }
+        self.running_note.set_visible(vm.state.is_active() && self.is_editable_item());
+        if !same {
+            self.state.borrow_mut().uuid = Some(vm.uuid.clone());
+            self.state.borrow_mut().selected = None;
+            self.load();
+        }
+    }
+
+    fn is_editable_item(&self) -> bool {
+        !matches!(self.state.borrow().selected, Some(Item::Xml) | None)
+    }
+
+    /// (Re)reads the configuration and the host's choices.
+    pub fn load(self: &Rc<Self>) {
+        let (conn, uuid, generation) = {
+            let mut st = self.state.borrow_mut();
+            st.generation += 1;
+            match (&st.conn, &st.uuid) {
+                (Some(c), Some(u)) => (c.clone(), u.clone(), st.generation),
+                _ => return,
+            }
+        };
+        if self.state.borrow().base.is_none() {
+            self.stack.set_visible_child_name("loading");
+        }
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = conn
+                .call(move |c| {
+                    let xml = c.domain_config_xml(&uuid)?;
+                    let choices = Choices {
+                        networks: c.list_networks().unwrap_or_default().into_iter().filter(|n| n.active).collect(),
+                        bridges: c.list_bridges(),
+                        images: c.list_install_images().unwrap_or_default(),
+                        pools: c
+                            .list_pools()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(p, _)| p)
+                            .filter(|p| p.active)
+                            .collect(),
+                        session: matches!(c.kind(), vmng_virt::ConnectionKind::Session),
+                    };
+                    Ok((xml, choices))
+                })
+                .await;
+            let Some(this) = weak.upgrade() else { return };
+            if this.state.borrow().generation != generation {
+                return;
+            }
+            match result {
+                Ok((xml, choices)) => {
+                    *this.work.borrow_mut() = xml.clone();
+                    {
+                        let mut st = this.state.borrow_mut();
+                        st.base = Some(xml);
+                        st.choices = choices;
+                    }
+                    this.rebuild_list();
+                    this.stack.set_visible_child_name("content");
+                    this.update_apply_bar();
+                }
+                Err(e) => this.feedback.error("Couldn't read the machine's configuration", e.message()),
+            }
+        });
+    }
+
+    fn rebuild_list(self: &Rc<Self>) {
+        let work = self.work.borrow().clone();
+        let mut items = vec![Item::CpuMemory, Item::Boot];
+        items.extend(list_devices(&work).iter().filter(|d| labels::is_listed(d)).map(|d| Item::Device(d.index)));
+        items.push(Item::Xml);
+
+        let previous = self.state.borrow().selected;
+        self.list.remove_all();
+        let mut rows = Vec::new();
+        for item in items {
+            let icon = gtk::Image::from_icon_name(match item {
+                Item::CpuMemory => "applications-system-symbolic",
+                Item::Boot => "system-run-symbolic",
+                Item::Xml => "text-x-generic-symbolic",
+                Item::Device(i) => {
+                    let kind = list_devices(&work)
+                        .into_iter()
+                        .find(|d| d.index == i)
+                        .map_or(DeviceKind::Other(String::new()), |d| d.kind);
+                    labels::icon(&kind)
+                }
+            });
+            let title = gtk::Label::builder()
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .css_classes(["heading"])
+                .build();
+            let subtitle = gtk::Label::builder()
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::Middle)
+                .css_classes(["caption", "dim-label"])
+                .build();
+            let text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(1).hexpand(true).build();
+            text.append(&title);
+            text.append(&subtitle);
+            let content = gtk::Box::builder().spacing(12).css_classes(["hardware-row"]).build();
+            content.append(&icon);
+            content.append(&text);
+            let row = gtk::ListBoxRow::builder().child(&content).build();
+            self.list.append(&row);
+            rows.push(Row { item, row, title, subtitle });
+        }
+        self.state.borrow_mut().rows = rows;
+        self.update_labels();
+        let target =
+            previous.filter(|p| self.state.borrow().rows.iter().any(|r| r.item == *p)).unwrap_or(Item::CpuMemory);
+        self.state.borrow_mut().selected = None;
+        let row = self.state.borrow().rows.iter().find(|r| r.item == target).map(|r| r.row.clone());
+        self.list.select_row(row.as_ref());
+        #[cfg(debug_assertions)]
+        self.dev_hooks();
+    }
+
+    /// Debug builds: `VMNG_DEV_HW_ROW=<n>` selects a row of the list and
+    /// `VMNG_DEV_HW_ADD=1` opens Add Hardware, for unattended screenshots.
+    #[cfg(debug_assertions)]
+    fn dev_hooks(self: &Rc<Self>) {
+        thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        if DONE.with(|d| d.replace(true)) {
+            return;
+        }
+        if let Some(n) = std::env::var("VMNG_DEV_HW_ROW").ok().and_then(|v| v.parse::<i32>().ok()) {
+            // Negative numbers count from the end (-1 = XML).
+            let count = self.state.borrow().rows.len() as i32;
+            let index = if n < 0 { count + n } else { n };
+            self.list.select_row(self.list.row_at_index(index).as_ref());
+        }
+        if std::env::var_os("VMNG_DEV_HW_ADD").is_some() {
+            self.add_hardware();
+        }
+        // VMNG_DEV_HW_MEMORY=<MiB>: change memory through the editor binding and Apply.
+        if let Some(mib) = std::env::var("VMNG_DEV_HW_MEMORY").ok().and_then(|v| v.parse::<u64>().ok()) {
+            self.bind(Target::Domain).set(|e| {
+                for n in ["memory", "currentMemory"] {
+                    let m = e.child_or_insert(n);
+                    m.set_attr("unit", "KiB");
+                    m.set_text((mib * 1024).to_string());
+                }
+            });
+            assert!(self.is_dirty() && self.apply_bar.reveals_child());
+            self.save();
+        }
+    }
+
+    /// Refreshes the titles in the list from the working copy.
+    fn update_labels(&self) {
+        let work = self.work.borrow().clone();
+        let devices = list_devices(&work);
+        let st = self.state.borrow();
+        for r in &st.rows {
+            let (title, sub) = match r.item {
+                Item::CpuMemory => {
+                    let c = vmng_virt::DomainConfig::from_xml(&work);
+                    ("Processor & memory".to_owned(), format!("{} vCPU · {}", c.vcpus, crate::format::bytes(c.memory)))
+                }
+                Item::Boot => {
+                    let c = vmng_virt::DomainConfig::from_xml(&work);
+                    let fw = match c.firmware {
+                        Some(vmng_virt::Firmware::Uefi { secure_boot: true }) => "UEFI · Secure Boot",
+                        Some(vmng_virt::Firmware::Uefi { .. }) => "UEFI",
+                        _ => "BIOS",
+                    };
+                    ("Boot & firmware".to_owned(), fw.to_owned())
+                }
+                Item::Xml => ("XML".to_owned(), "The complete configuration".to_owned()),
+                Item::Device(i) => devices.iter().find(|d| d.index == i).map(labels::describe).unwrap_or_default(),
+            };
+            r.title.set_label(&title);
+            r.subtitle.set_label(&sub);
+            r.subtitle.set_visible(!sub.is_empty());
+        }
+    }
+
+    fn bind(self: &Rc<Self>, target: Target) -> Bind {
+        let weak = Rc::downgrade(self);
+        Bind {
+            work: self.work.clone(),
+            target,
+            changed: Rc::new(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.update_labels();
+                    this.update_apply_bar();
+                }
+            }),
+        }
+    }
+
+    fn live(self: &Rc<Self>, index: usize) -> Live {
+        let weak = Rc::downgrade(self);
+        Rc::new(move |device: Element, message: String| {
+            if let Some(this) = weak.upgrade() {
+                this.update_live(index, device, message);
+            }
+        })
+    }
+
+    fn show_editor(self: &Rc<Self>) {
+        while let Some(c) = self.editor.first_child() {
+            self.editor.remove(&c);
+        }
+        let Some(item) = self.state.borrow().selected else { return };
+        let (host_cpus, host_mem, choices, active) = {
+            let st = self.state.borrow();
+            let h = st.host.as_ref();
+            (h.map_or(1, |h| h.cpus), h.map_or(64 << 30, |h| h.memory), st.choices.clone(), st.active)
+        };
+        let xml_editing = self.settings.get().xml_editing;
+        let work = self.work.borrow().clone();
+        self.remove.set_visible(false);
+        self.running_note.set_visible(active && item != Item::Xml);
+        let (title, subtitle, body) = match item {
+            Item::CpuMemory => (
+                "Processor & memory".to_owned(),
+                "How much of the host this machine may use.".to_owned(),
+                editors::cpu_memory(&self.bind(Target::Domain), host_cpus, host_mem),
+            ),
+            Item::Boot => (
+                "Boot & firmware".to_owned(),
+                "What the machine starts from.".to_owned(),
+                editors::boot(&self.bind(Target::Domain)),
+            ),
+            Item::Xml => {
+                let b = editors::xml_view(&self.bind(Target::Domain), xml_editing, true);
+                ("XML".to_owned(), "The complete libvirt configuration of this machine.".to_owned(), b)
+            }
+            Item::Device(index) => {
+                let Some(dev) = list_devices(&work).into_iter().find(|d| d.index == index) else { return };
+                let (title, sub) = labels::describe(&dev);
+                self.remove.set_visible(dev.kind.removable(&dev.element));
+                let bind = self.bind(Target::Device(index));
+                let body = match &dev.kind {
+                    DeviceKind::Disk => editors::disk(&bind),
+                    DeviceKind::Cdrom => editors::cdrom(&bind, &choices, &self.live(index)),
+                    DeviceKind::Interface => editors::interface(&bind, &choices, &self.live(index)),
+                    DeviceKind::Graphics => editors::graphics(&bind),
+                    DeviceKind::Video => editors::video(&bind),
+                    DeviceKind::Sound => editors::sound(&bind),
+                    DeviceKind::Input => editors::input(&bind),
+                    DeviceKind::Filesystem => editors::filesystem(&bind),
+                    DeviceKind::Controller => editors::controller(&bind),
+                    DeviceKind::Tpm => editors::tpm(&bind),
+                    other => editors::generic(&bind, other),
+                };
+                body.append(&editors::xml_view(&bind, xml_editing, false));
+                (title, sub, body)
+            }
+        };
+        self.title.set_label(&title);
+        self.subtitle.set_label(&subtitle);
+        self.subtitle.set_visible(!subtitle.is_empty());
+        self.editor.append(&body);
+    }
+
+    fn update_apply_bar(&self) {
+        let dirty = self.is_dirty();
+        self.apply_bar.set_reveal_child(dirty);
+        if dirty {
+            self.apply.grab_focus();
+        }
+    }
+
+    fn revert(self: &Rc<Self>) {
+        let base = self.state.borrow().base.clone();
+        if let Some(base) = base {
+            *self.work.borrow_mut() = base;
+        }
+        self.rebuild_list();
+        self.show_editor();
+        self.update_apply_bar();
+    }
+
+    fn conn_uuid(&self) -> Option<(Conn, String)> {
+        let st = self.state.borrow();
+        Some((st.conn.clone()?, st.uuid.clone()?))
+    }
+
+    fn save(self: &Rc<Self>) {
+        let Some((conn, uuid)) = self.conn_uuid() else { return };
+        let xml = self.work.borrow().clone();
+        let active = self.state.borrow().active;
+        self.apply.set_sensitive(false);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = conn.call(move |c| c.save_domain_config(&uuid, &xml)).await;
+            let Some(this) = weak.upgrade() else { return };
+            this.apply.set_sensitive(true);
+            match result {
+                Ok(()) => {
+                    this.feedback.toast(if active {
+                        "Saved. Restart the machine to use the new settings."
+                    } else {
+                        "Saved the changes"
+                    });
+                    this.state.borrow_mut().base = None;
+                    this.load();
+                    (this.on_changed)();
+                }
+                Err(e) => this.feedback.error("Couldn't save the changes", e.message()),
+            }
+        });
+    }
+
+    /// Applies an immediate change (CD, network cable) to one device.
+    fn update_live(self: &Rc<Self>, index: usize, device: Element, message: String) {
+        let Some((conn, uuid)) = self.conn_uuid() else { return };
+        let weak = Rc::downgrade(self);
+        let dev = device.clone();
+        glib::spawn_future_local(async move {
+            let result = conn.call(move |c| c.update_device(&uuid, &dev)).await;
+            let Some(this) = weak.upgrade() else { return };
+            match result {
+                Ok(now) => {
+                    // Keep unsaved edits elsewhere: patch both copies.
+                    let _ = vmng_virt::replace_device(&mut this.work.borrow_mut(), index, device.clone());
+                    if let Some(base) = this.state.borrow_mut().base.as_mut() {
+                        let _ = vmng_virt::replace_device(base, index, device);
+                    }
+                    this.update_labels();
+                    this.update_apply_bar();
+                    this.feedback.toast(&if now { message } else { format!("{message} (after a restart)") });
+                    (this.on_changed)();
+                }
+                Err(e) => {
+                    this.feedback.error("Couldn't change the device", e.message());
+                    this.show_editor();
+                }
+            }
+        });
+    }
+
+    fn ask_remove(self: &Rc<Self>) {
+        let Some(Item::Device(index)) = self.state.borrow().selected else { return };
+        let base = self.state.borrow().base.clone();
+        let Some(dev) = base.as_ref().and_then(|b| list_devices(b).into_iter().find(|d| d.index == index)) else {
+            return;
+        };
+        let (title, _) = labels::describe(&dev);
+        let element = dev.element;
+        let mut body = "It is removed from the machine's configuration.".to_owned();
+        if dev.kind == DeviceKind::Disk {
+            body.push_str(" The disk image itself is kept.");
+        }
+        if self.is_dirty() {
+            body.push_str(" Your unsaved changes are discarded.");
+        }
+        let heading = format!("Remove {title}?");
+        let weak = Rc::downgrade(self);
+        let run = move || {
+            if let Some(this) = weak.upgrade() {
+                this.remove_device(element.clone(), title.clone());
+            }
+        };
+        if self.settings.get().confirm_remove_device {
+            self.feedback.confirm(&heading, &body, "Remove", true, run);
+        } else {
+            run();
+        }
+    }
+
+    fn remove_device(self: &Rc<Self>, element: Element, title: String) {
+        let Some((conn, uuid)) = self.conn_uuid() else { return };
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = conn.call(move |c| c.remove_device(&uuid, &element)).await;
+            let Some(this) = weak.upgrade() else { return };
+            match result {
+                Ok(now) => {
+                    this.feedback.toast(&if now {
+                        format!("Removed {title}")
+                    } else {
+                        format!("Removed {title}. It disappears after a restart.")
+                    });
+                    this.state.borrow_mut().selected = None;
+                    this.load();
+                    (this.on_changed)();
+                }
+                Err(e) => this.feedback.error(&format!("Couldn't remove {title}"), e.message()),
+            }
+        });
+    }
+
+    /// Called when the person leaves the page with unapplied edits: asks
+    /// whether to apply or discard them (if that prompt is turned on).
+    pub fn leave(self: &Rc<Self>) {
+        if !self.is_dirty() {
+            return;
+        }
+        if !self.settings.get().confirm_unapplied_changes {
+            self.revert();
+            return;
+        }
+        let name = self.state.borrow().name.clone();
+        let dialog = adw::AlertDialog::builder()
+            .heading(format!("Apply the changes to {name}?"))
+            .body("You changed the hardware but didn't apply the changes.")
+            .build();
+        dialog.add_responses(&[("discard", "Discard"), ("apply", "Apply")]);
+        dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("apply"));
+        dialog.set_close_response("apply");
+        let weak = Rc::downgrade(self);
+        dialog.connect_response(None, move |_, response| {
+            if let Some(this) = weak.upgrade() {
+                if response == "discard" {
+                    this.revert();
+                } else {
+                    this.save();
+                }
+            }
+        });
+        dialog.present(Some(self.feedback.parent()));
+    }
+
+    fn add_hardware(self: &Rc<Self>) {
+        let Some((conn, uuid)) = self.conn_uuid() else { return };
+        let (choices, name, active) = {
+            let st = self.state.borrow();
+            (st.choices.clone(), st.name.clone(), st.active)
+        };
+        let domain = self.work.borrow().clone();
+        let weak = Rc::downgrade(self);
+        add::open(&self.feedback, add::AddContext { conn, uuid, name, active, domain, choices }, move || {
+            if let Some(this) = weak.upgrade() {
+                this.load();
+                (this.on_changed)();
+            }
+        });
+    }
+}

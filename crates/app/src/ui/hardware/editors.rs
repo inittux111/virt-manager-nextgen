@@ -1,0 +1,1013 @@
+//! Editors for the machine's settings and each kind of device.
+//!
+//! Every control reads from and writes to a working copy of the domain XML
+//! through a [`Bind`]; nothing reaches libvirt until the person presses
+//! Apply. A few changes that make sense immediately on a running machine
+//! (changing the CD, plugging the network cable) go through [`Live`].
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use adw::prelude::*;
+use vmng_virt::{DeviceKind, InstallImage, NetworkSummary, PoolSummary, disk_prefix, next_disk_target, units};
+use vmng_xml::{Element, Node};
+
+use crate::format;
+
+/// Which part of the working XML an editor changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Domain,
+    Device(usize),
+}
+
+/// Connects controls to the working copy of the domain XML.
+#[derive(Clone)]
+pub struct Bind {
+    pub work: Rc<RefCell<Element>>,
+    pub target: Target,
+    pub changed: Rc<dyn Fn()>,
+}
+
+impl Bind {
+    fn with<R>(el: &mut Element, target: Target, f: impl FnOnce(&mut Element) -> R) -> Option<R> {
+        match target {
+            Target::Domain => Some(f(el)),
+            Target::Device(i) => match el.child_mut("devices")?.children.get_mut(i)? {
+                Node::Element(e) => Some(f(e)),
+                _ => None,
+            },
+        }
+    }
+
+    pub fn get<R: Default>(&self, f: impl FnOnce(&Element) -> R) -> R {
+        let mut w = self.work.borrow_mut();
+        Self::with(&mut w, self.target, |e| f(e)).unwrap_or_default()
+    }
+
+    pub fn set(&self, f: impl FnOnce(&mut Element)) {
+        {
+            let mut w = self.work.borrow_mut();
+            Self::with(&mut w, self.target, f);
+        }
+        (self.changed)();
+    }
+
+    /// The whole domain, for edits that touch more than the device.
+    pub fn set_domain(&self, f: impl FnOnce(&mut Element)) {
+        f(&mut self.work.borrow_mut());
+        (self.changed)();
+    }
+}
+
+/// An immediate change to a running (or stopped) machine.
+pub type Live = Rc<dyn Fn(Element, String)>;
+
+/// Things the host offers that editors let people choose from.
+#[derive(Clone, Debug, Default)]
+pub struct Choices {
+    pub networks: Vec<NetworkSummary>,
+    pub bridges: Vec<String>,
+    pub images: Vec<InstallImage>,
+    pub pools: Vec<PoolSummary>,
+    pub session: bool,
+}
+
+// ── Row helpers ─────────────────────────────────────────────────────────
+
+fn group(title: &str) -> adw::PreferencesGroup {
+    adw::PreferencesGroup::builder().title(title).build()
+}
+
+fn fact(group: &adw::PreferencesGroup, title: &str, value: &str) {
+    let row = adw::ActionRow::builder().title(title).build();
+    let label = gtk::Label::builder()
+        .label(if value.is_empty() { "—" } else { value })
+        .tooltip_text(value)
+        .selectable(true)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .xalign(1.0)
+        .css_classes(["dim-label"])
+        .build();
+    row.add_suffix(&label);
+    group.add(&row);
+}
+
+/// A drop-down bound to a value. Unknown current values are kept as an
+/// extra option so nothing is changed by just looking.
+fn combo(
+    bind: &Bind,
+    title: &str,
+    options: &[(&str, &str)],
+    get: impl Fn(&Element) -> String + 'static,
+    set: impl Fn(&mut Element, &str) + 'static,
+) -> adw::ComboRow {
+    let mut opts: Vec<(String, String)> = options.iter().map(|(v, l)| ((*v).to_owned(), (*l).to_owned())).collect();
+    let current = bind.get(&get);
+    if !opts.iter().any(|(v, _)| *v == current) {
+        opts.push((current.clone(), if current.is_empty() { "Default".into() } else { current.clone() }));
+    }
+    let labels: Vec<&str> = opts.iter().map(|(_, l)| l.as_str()).collect();
+    let row = adw::ComboRow::builder().title(title).model(&gtk::StringList::new(&labels)).build();
+    row.set_selected(opts.iter().position(|(v, _)| *v == current).unwrap_or(0) as u32);
+    let bind = bind.clone();
+    row.connect_selected_notify(move |r| {
+        if let Some((v, _)) = opts.get(r.selected() as usize) {
+            let v = v.clone();
+            bind.set(|e| set(e, &v));
+        }
+    });
+    row
+}
+
+fn switch(
+    bind: &Bind,
+    title: &str,
+    subtitle: &str,
+    get: impl Fn(&Element) -> bool,
+    set: impl Fn(&mut Element, bool) + 'static,
+) -> adw::SwitchRow {
+    let row = adw::SwitchRow::builder().title(title).subtitle(subtitle).active(bind.get(get)).build();
+    let bind = bind.clone();
+    row.connect_active_notify(move |r| {
+        let on = r.is_active();
+        bind.set(|e| set(e, on));
+    });
+    row
+}
+
+fn entry(
+    bind: &Bind,
+    title: &str,
+    get: impl Fn(&Element) -> String,
+    set: impl Fn(&mut Element, &str) + 'static,
+) -> adw::EntryRow {
+    let row = adw::EntryRow::builder().title(title).text(bind.get(get)).build();
+    let bind = bind.clone();
+    row.connect_changed(move |r| {
+        let text = r.text().to_string();
+        bind.set(|e| set(e, text.trim()));
+    });
+    row
+}
+
+fn spin(
+    bind: &Bind,
+    title: &str,
+    (min, max, step, digits): (f64, f64, f64, u32),
+    get: impl Fn(&Element) -> f64,
+    set: impl Fn(&mut Element, f64) + 'static,
+) -> adw::SpinRow {
+    let row = adw::SpinRow::with_range(min, max, step);
+    row.set_title(title);
+    row.set_digits(digits);
+    row.set_value(bind.get(get));
+    let bind = bind.clone();
+    row.connect_value_notify(move |r| {
+        let v = r.value();
+        bind.set(|e| set(e, v));
+    });
+    row
+}
+
+fn vbox() -> gtk::Box {
+    gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(22).build()
+}
+
+fn note(text: &str) -> gtk::Label {
+    gtk::Label::builder().label(text).xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build()
+}
+
+// ── XML helpers ─────────────────────────────────────────────────────────
+
+fn set_attr_path(e: &mut Element, child: &str, attr: &str, value: &str) {
+    if value.is_empty() {
+        if let Some(c) = e.child_mut(child) {
+            c.remove_attr(attr);
+        }
+    } else {
+        e.child_or_insert(child).set_attr(attr, value);
+    }
+}
+
+fn toggle_child(e: &mut Element, name: &str, on: bool) {
+    let present = e.child(name).is_some();
+    if on && !present {
+        e.push(Element::new(name));
+    } else if !on {
+        e.remove_children(|c| c.name == name);
+    }
+}
+
+/// libvirt assigns addresses for a bus; after a bus change the old one is
+/// invalid, so it is dropped and libvirt picks a new one.
+fn drop_address(e: &mut Element) {
+    e.remove_children(|c| c.name == "address");
+}
+
+// ── Editors ─────────────────────────────────────────────────────────────
+
+/// Processor & memory (domain level).
+pub fn cpu_memory(bind: &Bind, host_cpus: u32, host_memory: u64) -> gtk::Box {
+    let b = vbox();
+    let cpu = group("Processor");
+    let vcpus = spin(
+        bind,
+        "Virtual CPUs",
+        (1.0, f64::from(host_cpus.max(1)).max(1.0) * 2.0, 1.0, 0),
+        |e| {
+            e.child("vcpu").map_or(1.0, |v| {
+                v.attr("current").and_then(|c| c.parse().ok()).unwrap_or_else(|| v.text().parse().unwrap_or(1.0))
+            })
+        },
+        |e, v| {
+            let vcpu = e.child_or_insert("vcpu");
+            vcpu.remove_attr("current");
+            vcpu.set_text((v as u32).max(1).to_string());
+        },
+    );
+    vcpus.set_subtitle(&format!("The host has {host_cpus} logical CPUs"));
+    cpu.add(&vcpus);
+    cpu.add(&combo(
+        bind,
+        "CPU model",
+        &[
+            ("host-passthrough", "Same as the host (fastest)"),
+            ("host-model", "Similar to the host (portable)"),
+            ("custom", "A specific CPU model"),
+            ("", "Hypervisor default"),
+        ],
+        |e| e.find_attr("cpu", "mode").unwrap_or_default().to_owned(),
+        |e, v| {
+            if v.is_empty() {
+                e.remove_children(|c| c.name == "cpu");
+            } else {
+                let cpu = e.child_or_insert("cpu");
+                cpu.set_attr("mode", v);
+                if v != "custom" {
+                    cpu.remove_children(|c| c.name == "model");
+                }
+                if v == "host-passthrough" {
+                    cpu.set_attr("check", "none");
+                    cpu.set_attr("migratable", "on");
+                } else {
+                    cpu.remove_attr("migratable");
+                }
+            }
+        },
+    ));
+    b.append(&cpu);
+
+    let mem = group("Memory");
+    let memory = spin(
+        bind,
+        "Memory (GiB)",
+        (0.5, (host_memory as f64 / units::GIB as f64).max(1.0), 0.5, 1),
+        |e| {
+            let el = e.child("currentMemory").or_else(|| e.child("memory"));
+            el.map_or(1.0, |m| {
+                units::to_bytes(m.text().parse().unwrap_or(0), m.attr("unit"), units::KIB) as f64 / units::GIB as f64
+            })
+        },
+        |e, v| {
+            let kib = ((v * units::GIB as f64) as u64 / units::KIB).to_string();
+            for name in ["memory", "currentMemory"] {
+                let m = e.child_or_insert(name);
+                m.set_attr("unit", "KiB");
+                m.set_text(kib.clone());
+            }
+        },
+    );
+    memory.set_subtitle(&format!("The host has {}", format::bytes(host_memory)));
+    mem.add(&memory);
+    mem.add(&switch(
+        bind,
+        "Shared memory",
+        "Needed for shared folders (virtiofs)",
+        |e| e.find_attr("memoryBacking/access", "mode") == Some("shared"),
+        |e, on| {
+            if on {
+                let mb = e.child_or_insert("memoryBacking");
+                mb.child_or_insert("source").set_attr("type", "memfd");
+                mb.child_or_insert("access").set_attr("mode", "shared");
+            } else if let Some(mb) = e.child_mut("memoryBacking") {
+                mb.remove_children(|c| c.name == "source" || c.name == "access");
+                if mb.children.is_empty() {
+                    e.remove_children(|c| c.name == "memoryBacking");
+                }
+            }
+        },
+    ));
+    b.append(&mem);
+    b
+}
+
+/// Devices that can be in the boot order.
+fn bootable(e: &Element) -> bool {
+    e.name == "disk" || e.name == "interface" || (e.name == "hostdev" && e.attr("mode") == Some("subsystem"))
+}
+
+/// Boot & firmware (domain level).
+pub fn boot(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let fw = group("Firmware");
+    let (firmware, secure) = bind.get(|e| {
+        let efi = e.find_attr("os", "firmware") == Some("efi") || e.find_attr("os/loader", "type") == Some("pflash");
+        let secure = e.find_attr("os/loader", "secure") == Some("yes")
+            || e.find("os/firmware").is_some_and(|f| {
+                f.children_named("feature")
+                    .any(|x| x.attr("name") == Some("secure-boot") && x.attr("enabled") == Some("yes"))
+            });
+        (if efi { "UEFI" } else { "BIOS" }.to_owned(), secure)
+    });
+    fact(&fw, "Boot firmware", &if secure { format!("{firmware} · Secure Boot") } else { firmware });
+    fw.add(&switch(
+        bind,
+        "Show boot menu",
+        "Lets you pick a boot device while the machine starts",
+        |e| e.find_attr("os/bootmenu", "enable") == Some("yes"),
+        |e, on| {
+            let os = e.child_or_insert("os");
+            if on {
+                os.child_or_insert("bootmenu").set_attr("enable", "yes");
+            } else {
+                os.remove_children(|c| c.name == "bootmenu");
+            }
+        },
+    ));
+    b.append(&fw);
+
+    // Boot order: devices with <boot order='n'/>, then the rest.
+    let order = group("Boot order");
+    order.set_description(Some("Checked devices are tried from top to bottom."));
+    let list = gtk::ListBox::builder().css_classes(["boxed-list"]).selection_mode(gtk::SelectionMode::None).build();
+    order.add(&list);
+    b.append(&order);
+    fill_boot_list(bind, &list);
+    b
+}
+
+fn boot_candidates(e: &Element) -> Vec<(usize, Option<u32>, String)> {
+    // Older configurations list device types in <os><boot dev='hd'/>
+    // instead of numbering devices; translate those into an order.
+    let legacy: Vec<String> = e
+        .child("os")
+        .map(|os| os.children_named("boot").filter_map(|b| b.attr("dev").map(str::to_owned)).collect())
+        .unwrap_or_default();
+    let legacy_rank = |el: &Element| {
+        let dev = match (el.name.as_str(), el.attr("device")) {
+            ("disk", Some("cdrom")) => "cdrom",
+            ("disk", Some("floppy")) => "fd",
+            ("disk", _) => "hd",
+            ("interface", _) => "network",
+            _ => return None,
+        };
+        legacy.iter().position(|d| d == dev).map(|p| p as u32 * 100)
+    };
+    let mut out: Vec<(usize, Option<u32>, String)> = vmng_virt::list_devices(e)
+        .into_iter()
+        .filter(|d| bootable(&d.element))
+        .map(|d| {
+            let order = d.element.find_attr("boot", "order").and_then(|o| o.parse().ok());
+            let order = order.or_else(|| legacy_rank(&d.element).map(|r| r + d.index as u32));
+            (d.index, order, super::labels::describe(&d).0)
+        })
+        .collect();
+    out.sort_by_key(|(i, o, _)| (o.unwrap_or(u32::MAX), *i));
+    out
+}
+
+/// Rewrites boot orders from a list of (device index, enabled) in order.
+fn apply_boot_order(e: &mut Element, rows: &[(usize, bool)]) {
+    // Per-device order and <os><boot dev=…> can't be mixed.
+    if let Some(os) = e.child_mut("os") {
+        os.remove_children(|c| c.name == "boot");
+    }
+    let mut n = 1;
+    let Some(devices) = e.child_mut("devices") else { return };
+    for (index, enabled) in rows {
+        if let Some(Node::Element(dev)) = devices.children.get_mut(*index) {
+            dev.remove_children(|c| c.name == "boot");
+            if *enabled {
+                dev.push(Element::new("boot").with_attr("order", n.to_string()));
+                n += 1;
+            }
+        }
+    }
+}
+
+fn fill_boot_list(bind: &Bind, list: &gtk::ListBox) {
+    while let Some(c) = list.first_child() {
+        list.remove(&c);
+    }
+    let rows: Vec<(usize, bool, String)> =
+        bind.get(|e| boot_candidates(e).into_iter().map(|(i, o, t)| (i, o.is_some(), t)).collect());
+    let count = rows.len();
+    let state = Rc::new(RefCell::new(rows.iter().map(|(i, on, _)| (*i, *on)).collect::<Vec<_>>()));
+    for (pos, (_, on, title)) in rows.iter().enumerate() {
+        let check = gtk::CheckButton::builder().active(*on).valign(gtk::Align::Center).build();
+        let row = adw::ActionRow::builder().title(title).activatable_widget(&check).build();
+        row.add_prefix(&check);
+        let up = gtk::Button::builder()
+            .icon_name("go-up-symbolic")
+            .tooltip_text("Move up")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .sensitive(pos > 0)
+            .build();
+        let down = gtk::Button::builder()
+            .icon_name("go-down-symbolic")
+            .tooltip_text("Move down")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .sensitive(pos + 1 < count)
+            .build();
+        row.add_suffix(&up);
+        row.add_suffix(&down);
+        list.append(&row);
+
+        let commit = {
+            let (bind, list, state) = (bind.clone(), list.clone(), state.clone());
+            move || {
+                let rows = state.borrow().clone();
+                bind.set_domain(|e| apply_boot_order(e, &rows));
+                let (bind, list) = (bind.clone(), list.clone());
+                // Rebuild after the click handler has returned.
+                gtk::glib::idle_add_local_once(move || fill_boot_list(&bind, &list));
+            }
+        };
+        let (s, c) = (state.clone(), commit.clone());
+        check.connect_toggled(move |b| {
+            s.borrow_mut()[pos].1 = b.is_active();
+            c();
+        });
+        let (s, c) = (state.clone(), commit.clone());
+        up.connect_clicked(move |_| {
+            s.borrow_mut().swap(pos, pos - 1);
+            c();
+        });
+        let (s, c) = (state.clone(), commit);
+        down.connect_clicked(move |_| {
+            s.borrow_mut().swap(pos, pos + 1);
+            c();
+        });
+    }
+}
+
+/// A disk (not CD-ROM).
+pub fn disk(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let info = group("Disk");
+    fact(&info, "Source", &bind.get(|e| super::labels::disk_source(e).unwrap_or_default()));
+    fact(&info, "Format", &bind.get(|e| e.find_attr("driver", "type").unwrap_or_default().to_owned()));
+    b.append(&info);
+
+    let opts = group("Options");
+    opts.add(&bus_combo(bind, &[("virtio", "VirtIO (fastest)"), ("sata", "SATA"), ("scsi", "SCSI"), ("usb", "USB")]));
+    opts.add(&combo(
+        bind,
+        "Cache mode",
+        &[
+            ("", "Default"),
+            ("none", "None (safest with host crashes)"),
+            ("writeback", "Write-back (faster)"),
+            ("writethrough", "Write-through"),
+            ("unsafe", "Unsafe (fastest, risky)"),
+        ],
+        |e| e.find_attr("driver", "cache").unwrap_or_default().to_owned(),
+        |e, v| set_attr_path(e, "driver", "cache", v),
+    ));
+    opts.add(&combo(
+        bind,
+        "Discard",
+        &[("", "Default"), ("unmap", "Pass to the image (frees space)"), ("ignore", "Ignore")],
+        |e| e.find_attr("driver", "discard").unwrap_or_default().to_owned(),
+        |e, v| set_attr_path(e, "driver", "discard", v),
+    ));
+    opts.add(&switch(
+        bind,
+        "Read-only",
+        "The guest can't change the disk",
+        |e| e.child("readonly").is_some(),
+        |e, on| toggle_child(e, "readonly", on),
+    ));
+    opts.add(&switch(
+        bind,
+        "Shareable",
+        "Several machines may use this disk at the same time",
+        |e| e.child("shareable").is_some(),
+        |e, on| toggle_child(e, "shareable", on),
+    ));
+    opts.add(&entry(
+        bind,
+        "Serial number (optional)",
+        |e| e.find_text("serial").unwrap_or_default(),
+        |e, v| {
+            if v.is_empty() {
+                e.remove_children(|c| c.name == "serial");
+            } else {
+                e.child_or_insert("serial").set_text(v);
+            }
+        },
+    ));
+    b.append(&opts);
+    b
+}
+
+/// Changing the bus also changes the target name (vda ↔ sda).
+fn bus_combo(bind: &Bind, options: &[(&str, &str)]) -> adw::ComboRow {
+    let mut opts: Vec<(String, String)> = options.iter().map(|(v, l)| ((*v).to_owned(), (*l).to_owned())).collect();
+    let current = bind.get(|e| e.find_attr("target", "bus").unwrap_or_default().to_owned());
+    if !opts.iter().any(|(v, _)| *v == current) {
+        opts.push((current.clone(), current.clone()));
+    }
+    let labels: Vec<&str> = opts.iter().map(|(_, l)| l.as_str()).collect();
+    let row = adw::ComboRow::builder().title("Bus").model(&gtk::StringList::new(&labels)).build();
+    row.set_selected(opts.iter().position(|(v, _)| *v == current).unwrap_or(0) as u32);
+    let bind = bind.clone();
+    row.connect_selected_notify(move |r| {
+        let Some((bus, _)) = opts.get(r.selected() as usize).cloned() else { return };
+        if bind.get(|e| e.find_attr("target", "bus") == Some(bus.as_str())) {
+            return;
+        }
+        // Pick a free name on the new bus, ignoring this disk's own name.
+        let own = bind.get(|e| e.find_attr("target", "dev").map(str::to_owned));
+        let mut others = bind.work.borrow().clone();
+        if let Some(devices) = others.child_mut("devices") {
+            devices.remove_children(|d| d.name == "disk" && d.find_attr("target", "dev").map(str::to_owned) == own);
+        }
+        let target = next_disk_target(&others, disk_prefix(&bus));
+        bind.set(|e| {
+            let t = e.child_or_insert("target");
+            t.set_attr("bus", &bus);
+            t.set_attr("dev", &target);
+            drop_address(e);
+        });
+    });
+    row
+}
+
+/// A CD-ROM drive. Changing the disc applies immediately.
+pub fn cdrom(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
+    let b = vbox();
+    let media = group("Disc");
+    let current = bind.get(super::labels::disk_source);
+    let mut options: Vec<(String, Option<String>)> = vec![("Empty".into(), None)];
+    for img in &choices.images {
+        options.push((img.name.clone(), Some(img.path.clone())));
+    }
+    if let Some(c) = &current
+        && !options.iter().any(|(_, p)| p.as_ref() == Some(c))
+    {
+        options.push((c.rsplit('/').next().unwrap_or(c).to_owned(), Some(c.clone())));
+    }
+    let labels: Vec<&str> = options.iter().map(|(l, _)| l.as_str()).collect();
+    let row = adw::ComboRow::builder()
+        .title("Inserted disc")
+        .subtitle("Changes right away, also while the machine runs")
+        .model(&gtk::StringList::new(&labels))
+        .build();
+    row.set_selected(options.iter().position(|(_, p)| *p == current).unwrap_or(0) as u32);
+    let (bind2, live2) = (bind.clone(), live.clone());
+    row.connect_selected_notify(move |r| {
+        let Some((label, path)) = options.get(r.selected() as usize).cloned() else { return };
+        let mut dev = bind2.get(|e| e.clone());
+        dev.remove_children(|c| c.name == "source");
+        if let Some(p) = &path {
+            let pos =
+                dev.children.iter().position(|n| matches!(n, Node::Element(c) if c.name == "target")).unwrap_or(0);
+            dev.set_attr("type", "file");
+            dev.children.insert(pos, Node::Element(Element::new("source").with_attr("file", p)));
+        }
+        let msg = if path.is_some() { format!("Inserted {label}") } else { "Ejected the disc".into() };
+        live2(dev, msg);
+    });
+    media.add(&row);
+    b.append(&media);
+    let opts = group("Options");
+    opts.add(&bus_combo(bind, &[("sata", "SATA"), ("scsi", "SCSI"), ("ide", "IDE"), ("usb", "USB")]));
+    b.append(&opts);
+    b
+}
+
+/// A network card.
+pub fn interface(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
+    let b = vbox();
+    let g = group("Connection");
+    let mut options: Vec<(String, String)> = Vec::new();
+    for n in &choices.networks {
+        options.push((
+            format!("network:{}", n.name),
+            format!("Virtual network “{}” · {}", n.name, n.forward.to_uppercase()),
+        ));
+    }
+    for br in &choices.bridges {
+        options.push((format!("bridge:{br}"), format!("Bridge {br} · on your local network")));
+    }
+    options.push(("user:".into(), "User networking".into()));
+    let refs: Vec<(&str, &str)> = options.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+    g.add(&combo(
+        bind,
+        "Connected to",
+        &refs,
+        |e| match e.attr("type") {
+            Some("network") => format!("network:{}", e.find_attr("source", "network").unwrap_or_default()),
+            Some("bridge") => format!("bridge:{}", e.find_attr("source", "bridge").unwrap_or_default()),
+            Some("user") => "user:".into(),
+            Some(other) => format!("{other}:{}", e.find_attr("source", "dev").unwrap_or_default()),
+            None => String::new(),
+        },
+        |e, v| {
+            let (kind, name) = v.split_once(':').unwrap_or((v, ""));
+            e.set_attr("type", kind);
+            e.remove_children(|c| c.name == "source" || c.name == "target" || c.name == "virtualport");
+            match kind {
+                "network" => e.children.insert(0, Node::Element(Element::new("source").with_attr("network", name))),
+                "bridge" => e.children.insert(0, Node::Element(Element::new("source").with_attr("bridge", name))),
+                _ => {}
+            }
+        },
+    ));
+    g.add(&combo(
+        bind,
+        "Model",
+        &[
+            ("virtio", "VirtIO (fastest)"),
+            ("e1000e", "Intel e1000e"),
+            ("e1000", "Intel e1000"),
+            ("rtl8139", "Realtek RTL8139"),
+        ],
+        |e| e.find_attr("model", "type").unwrap_or_default().to_owned(),
+        |e, v| {
+            set_attr_path(e, "model", "type", v);
+            drop_address(e);
+        },
+    ));
+    fact(&g, "MAC address", &bind.get(|e| e.find_attr("mac", "address").unwrap_or_default().to_owned()));
+    b.append(&g);
+
+    let state = group("State");
+    let cable = adw::SwitchRow::builder()
+        .title("Cable connected")
+        .subtitle("Changes right away, also while the machine runs")
+        .active(bind.get(|e| e.find_attr("link", "state") != Some("down")))
+        .build();
+    let (bind2, live2) = (bind.clone(), live.clone());
+    cable.connect_active_notify(move |r| {
+        let mut dev = bind2.get(|e| e.clone());
+        dev.child_or_insert("link").set_attr("state", if r.is_active() { "up" } else { "down" });
+        live2(
+            dev,
+            if r.is_active() { "Connected the network cable".into() } else { "Unplugged the network cable".into() },
+        );
+    });
+    state.add(&cable);
+    b.append(&state);
+    b
+}
+
+/// The graphical display (SPICE/VNC).
+pub fn graphics(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Display");
+    g.add(&combo(
+        bind,
+        "Protocol",
+        &[("spice", "SPICE (recommended)"), ("vnc", "VNC")],
+        |e| e.attr("type").unwrap_or_default().to_owned(),
+        |e, v| {
+            e.set_attr("type", v);
+            // Protocol-specific settings don't carry over.
+            e.remove_children(|c| {
+                matches!(
+                    c.name.as_str(),
+                    "image" | "streaming" | "clipboard" | "mouse" | "filetransfer" | "gl" | "channel"
+                )
+            });
+            e.remove_attr("tlsPort");
+        },
+    ));
+    g.add(&combo(
+        bind,
+        "Reachable from",
+        &[("127.0.0.1", "This computer only"), ("0.0.0.0", "Any network (less safe)"), ("none", "Local socket only")],
+        |e| match e.find_attr("listen", "type") {
+            Some("none") => "none".into(),
+            _ => e.find_attr("listen", "address").or(e.attr("listen")).unwrap_or("127.0.0.1").to_owned(),
+        },
+        |e, v| {
+            e.remove_children(|c| c.name == "listen");
+            e.remove_attr("listen");
+            let listen = if v == "none" {
+                Element::new("listen").with_attr("type", "none")
+            } else {
+                e.set_attr("listen", v);
+                Element::new("listen").with_attr("type", "address").with_attr("address", v)
+            };
+            e.push(listen);
+        },
+    ));
+    g.add(&switch(
+        bind,
+        "Choose port automatically",
+        "Recommended when several machines run",
+        |e| e.attr("autoport") != Some("no"),
+        |e, on| {
+            e.set_attr("autoport", if on { "yes" } else { "no" });
+            if on {
+                e.remove_attr("port");
+            } else if e.attr("port").is_none_or(|p| p == "-1") {
+                e.set_attr("port", "5900");
+            }
+        },
+    ));
+    g.add(&spin(
+        bind,
+        "Port (when not automatic)",
+        (5900.0, 65535.0, 1.0, 0),
+        |e| e.attr("port").and_then(|p| p.parse().ok()).filter(|&p: &f64| p > 0.0).unwrap_or(5900.0),
+        |e, v| {
+            if e.attr("autoport") == Some("no") {
+                e.set_attr("port", (v as u32).to_string());
+            }
+        },
+    ));
+    let password = adw::PasswordEntryRow::builder()
+        .title("Password (optional)")
+        .text(bind.get(|e| e.attr("passwd").unwrap_or_default().to_owned()))
+        .build();
+    let bind2 = bind.clone();
+    password.connect_changed(move |r| {
+        let text = r.text().to_string();
+        bind2.set(|e| {
+            if text.is_empty() {
+                e.remove_attr("passwd");
+            } else {
+                e.set_attr("passwd", text);
+            }
+        });
+    });
+    g.add(&password);
+    b.append(&g);
+    b
+}
+
+pub fn video(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Video");
+    g.add(&combo(
+        bind,
+        "Model",
+        &[
+            ("virtio", "VirtIO (recommended for Linux)"),
+            ("qxl", "QXL"),
+            ("vga", "VGA"),
+            ("bochs", "Bochs"),
+            ("ramfb", "ramfb"),
+            ("cirrus", "Cirrus (very old systems)"),
+            ("none", "None"),
+        ],
+        |e| e.find_attr("model", "type").unwrap_or_default().to_owned(),
+        |e, v| {
+            let m = e.child_or_insert("model");
+            *m = Element::new("model").with_attr("type", v);
+            drop_address(e);
+        },
+    ));
+    b.append(&g);
+    b
+}
+
+pub fn sound(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Sound");
+    g.add(&combo(
+        bind,
+        "Model",
+        &[("ich9", "Intel HDA (ICH9)"), ("ich6", "Intel HDA (ICH6)"), ("ac97", "AC97"), ("usb", "USB audio")],
+        |e| e.attr("model").unwrap_or_default().to_owned(),
+        |e, v| {
+            e.set_attr("model", v);
+            drop_address(e);
+        },
+    ));
+    b.append(&g);
+    b
+}
+
+pub fn input(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Input");
+    fact(&g, "Type", &bind.get(|e| e.attr("type").unwrap_or_default().to_owned()));
+    if bind.get(|e| e.attr("bus") != Some("ps2")) {
+        g.add(&combo(
+            bind,
+            "Bus",
+            &[("usb", "USB"), ("virtio", "VirtIO")],
+            |e| e.attr("bus").unwrap_or_default().to_owned(),
+            |e, v| {
+                e.set_attr("bus", v);
+                drop_address(e);
+            },
+        ));
+    } else {
+        g.add(
+            &adw::ActionRow::builder()
+                .title("Built into the machine")
+                .subtitle("PS/2 devices come with the chipset and can't be changed")
+                .build(),
+        );
+    }
+    b.append(&g);
+    b
+}
+
+pub fn filesystem(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Shared folder");
+    g.add(&entry(
+        bind,
+        "Folder on the host",
+        |e| e.find_attr("source", "dir").unwrap_or_default().to_owned(),
+        |e, v| {
+            e.child_or_insert("source").set_attr("dir", v);
+        },
+    ));
+    g.add(&entry(
+        bind,
+        "Name in the guest (mount tag)",
+        |e| e.find_attr("target", "dir").unwrap_or_default().to_owned(),
+        |e, v| {
+            e.child_or_insert("target").set_attr("dir", v);
+        },
+    ));
+    b.append(&g);
+    b.append(&note("In a Linux guest, mount it with: mount -t virtiofs <name> /mnt/<folder>"));
+    b
+}
+
+pub fn controller(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Controller");
+    let kind = bind.get(|e| e.attr("type").unwrap_or_default().to_owned());
+    fact(&g, "Type", &kind.to_uppercase());
+    let options: &[(&str, &str)] = match kind.as_str() {
+        "usb" => &[
+            ("qemu-xhci", "USB 3 (qemu-xhci)"),
+            ("nec-xhci", "USB 3 (NEC)"),
+            ("ich9-ehci1", "USB 2 (ICH9)"),
+            ("piix3-uhci", "USB 1 (PIIX3)"),
+        ],
+        "scsi" => &[("virtio-scsi", "VirtIO SCSI"), ("lsilogic", "LSI Logic")],
+        _ => &[],
+    };
+    if !options.is_empty() {
+        g.add(&combo(
+            bind,
+            "Model",
+            options,
+            |e| e.attr("model").unwrap_or_default().to_owned(),
+            |e, v| {
+                e.set_attr("model", v);
+                drop_address(e);
+            },
+        ));
+    }
+    b.append(&g);
+    b
+}
+
+pub fn tpm(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("TPM");
+    g.add(&combo(
+        bind,
+        "Model",
+        &[("tpm-crb", "CRB (recommended)"), ("tpm-tis", "TIS")],
+        |e| e.attr("model").unwrap_or_default().to_owned(),
+        |e, v| e.set_attr("model", v),
+    ));
+    fact(&g, "Version", &bind.get(|e| e.find_attr("backend", "version").unwrap_or("2.0").to_owned()));
+    fact(&g, "Backend", &bind.get(|e| e.find_attr("backend", "type").unwrap_or_default().to_owned()));
+    b.append(&g);
+    b
+}
+
+/// Read-only facts for devices without a dedicated editor.
+pub fn generic(bind: &Bind, kind: &DeviceKind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Details");
+    let attrs: Vec<(String, String)> = bind.get(|e| {
+        let mut v: Vec<(String, String)> = e.attrs.clone();
+        for c in e.elements().filter(|c| c.name != "address" && c.name != "alias") {
+            for (k, val) in &c.attrs {
+                v.push((format!("{} {k}", c.name), val.clone()));
+            }
+            let t = c.text();
+            if !t.is_empty() {
+                v.push((c.name.clone(), t));
+            }
+        }
+        v
+    });
+    if matches!(kind, DeviceKind::Channel)
+        && bind.get(|e| e.find_attr("target", "name") == Some("org.qemu.guest_agent.0"))
+    {
+        b.append(&note(
+            "Lets the qemu-guest-agent in the guest report its IP address and hostname, and shut down cleanly. Install the qemu-guest-agent package in the guest.",
+        ));
+    }
+    for (k, v) in attrs {
+        fact(&g, &k, &v);
+    }
+    b.prepend(&g);
+    b
+}
+
+/// The XML of the device (or whole machine): read-only unless XML editing
+/// is turned on in Preferences.
+pub fn xml_view(bind: &Bind, editable: bool, expanded: bool) -> gtk::Box {
+    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).build();
+    let buffer = gtk::TextBuffer::new(None);
+    buffer.set_text(bind.get(|e| e.to_xml()).trim_end());
+    let view = gtk::TextView::builder()
+        .buffer(&buffer)
+        .monospace(true)
+        .editable(editable)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .top_margin(12)
+        .bottom_margin(12)
+        .left_margin(12)
+        .right_margin(12)
+        .css_classes(["xml-view", "card"])
+        .build();
+    view.update_property(&[gtk::accessible::Property::Label("XML")]);
+    let error = gtk::Label::builder().xalign(0.0).wrap(true).visible(false).css_classes(["error", "caption"]).build();
+    let expander = gtk::Expander::builder().label("XML").expanded(expanded).build();
+    let inner = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).margin_top(8).build();
+    if editable {
+        let bind = bind.clone();
+        let err = error.clone();
+        buffer.connect_changed(move |buf| {
+            let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+            match vmng_xml::parse(&text) {
+                Ok(el) => {
+                    err.set_visible(false);
+                    if bind.get(|e| *e != el) {
+                        bind.set(|e| *e = el);
+                    }
+                }
+                Err(e) => {
+                    err.set_label(&e.to_string());
+                    err.set_visible(true);
+                }
+            }
+        });
+    } else {
+        inner.append(&note("Turn on “Allow editing the raw XML” in Preferences to change this."));
+    }
+    inner.append(&view);
+    inner.append(&error);
+    expander.set_child(Some(&inner));
+    b.append(&expander);
+    b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_boot_order_is_understood() {
+        let d = vmng_xml::parse(
+            "<domain><os><boot dev='cdrom'/><boot dev='hd'/></os><devices>\
+             <disk device='disk'><target dev='vda'/></disk>\
+             <disk device='cdrom'><target dev='sda'/></disk>\
+             <interface type='network'/></devices></domain>",
+        )
+        .unwrap();
+        let c = boot_candidates(&d);
+        let order: Vec<(usize, bool)> = c.iter().map(|(i, o, _)| (*i, o.is_some())).collect();
+        assert_eq!(order, [(1, true), (0, true), (2, false)]);
+    }
+
+    #[test]
+    fn boot_order_is_renumbered() {
+        let mut d = vmng_xml::parse(
+            "<domain><os><boot dev='hd'/></os><devices>\
+             <disk device='disk'><target dev='vda'/><boot order='2'/></disk>\
+             <disk device='cdrom'><target dev='sda'/><boot order='1'/></disk>\
+             <interface type='network'/></devices></domain>",
+        )
+        .unwrap();
+        let c = boot_candidates(&d);
+        assert_eq!(c.iter().map(|(i, _, _)| *i).collect::<Vec<_>>(), [1, 0, 2]);
+        apply_boot_order(&mut d, &[(0, true), (1, false), (2, true)]);
+        assert!(d.find("os/boot").is_none());
+        let orders: Vec<_> = vmng_virt::list_devices(&d)
+            .iter()
+            .map(|x| x.element.find_attr("boot", "order").map(str::to_owned))
+            .collect();
+        assert_eq!(orders, [Some("1".to_owned()), None, Some("2".to_owned())]);
+    }
+}

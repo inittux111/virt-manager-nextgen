@@ -147,3 +147,21 @@ sparkline.inactive { color: alpha(currentColor, 0.25); }
 }
 .method-card:checked .method-icon { color: var(--accent-color); }
 .os-card { padding: 12px 14px; }
+
+/* ── Hardware ────────────────────────────────────────────────────────── */
+
+.hardware-list > row { padding: 0; }
+.hardware-row { padding: 10px 14px; }
+.hardware-list > row:selected {
+  background-color: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
+}
+.hardware-list > row:selected .heading { color: var(--accent-color); }
+.apply-bar {
+  padding: 8px 8px 8px 18px;
+  border-radius: 999px;
+  background-color: var(--popover-bg-color);
+  color: var(--popover-fg-color);
+  box-shadow: 0 0 0 1px var(--border-color), 0 8px 24px color-mix(in srgb, black 18%, transparent);
+}
+.nav-heading { margin: 12px 8px 4px 8px; }
+.xml-view { font-size: 0.9em; }

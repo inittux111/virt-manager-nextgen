@@ -7,7 +7,7 @@ use vmng_xml::Element;
 use crate::config::Firmware;
 use crate::connection::Connection;
 use crate::error::{Error, Result};
-use crate::manage::{unique_name, validate_vm_name};
+use crate::manage::{unique_file_name, validate_vm_name};
 use crate::units::KIB;
 
 /// How the guest OS gets onto the machine.
@@ -322,7 +322,7 @@ impl Connection {
             (InstallSource::ImportDisk(path), _) => Some(path.clone()),
             (_, Some(disk)) => {
                 let ext = if disk.format == "qcow2" { ".qcow2" } else { ".img" };
-                let name = unique_name(&format!("{}{ext}", vm.name), |n| !self.volume_name_free(&disk.pool, n));
+                let name = unique_file_name(&vm.name, ext, |n| !self.volume_name_free(&disk.pool, n));
                 let path = self.create_volume(&disk.pool, &name, disk.size, &disk.format)?;
                 created_disk = Some(path.clone());
                 Some(path)
