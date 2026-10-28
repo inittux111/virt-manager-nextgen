@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
 use vmng_virt::{DeviceKind, DomainSummary, HostInfo, list_devices};
 use vmng_xml::Element;
 
@@ -61,6 +61,8 @@ pub struct HardwareView {
     stack: gtk::Stack,
     apply_bar: gtk::Revealer,
     apply: gtk::Button,
+    /// Right-click menu of the device list.
+    menu: gtk::PopoverMenu,
     work: Rc<RefCell<Element>>,
     state: RefCell<HwState>,
     feedback: Feedback,
@@ -71,6 +73,12 @@ pub struct HardwareView {
 impl std::fmt::Debug for HardwareView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HardwareView").finish_non_exhaustive()
+    }
+}
+
+impl Drop for HardwareView {
+    fn drop(&mut self) {
+        self.menu.unparent();
     }
 }
 
@@ -141,6 +149,15 @@ impl HardwareView {
         let root = gtk::Overlay::builder().child(&stack).build();
         root.add_overlay(&apply_bar);
 
+        let menu_model = gio::Menu::new();
+        menu_model.append(Some("Remove…"), Some("hw.remove"));
+        let menu = gtk::PopoverMenu::from_model(Some(&menu_model));
+        // Parented to the column, not the list: a list removes all of its
+        // children when it is refilled, which a popover must survive.
+        menu.set_parent(&left);
+        menu.set_has_arrow(false);
+        menu.set_halign(gtk::Align::Start);
+
         let this = Rc::new(Self {
             root,
             list,
@@ -152,6 +169,7 @@ impl HardwareView {
             stack,
             apply_bar,
             apply,
+            menu,
             work: Rc::default(),
             state: RefCell::default(),
             feedback,
@@ -188,6 +206,47 @@ impl HardwareView {
                 this.ask_remove();
             }
         });
+        // Right-click (or Delete) removes a device; devices that can't be
+        // removed show the menu item disabled.
+        let remove_action = gio::SimpleAction::new("remove", None);
+        let weak = Rc::downgrade(&this);
+        remove_action.connect_activate(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.ask_remove();
+            }
+        });
+        let actions = gio::SimpleActionGroup::new();
+        actions.add_action(&remove_action);
+        this.root.insert_action_group("hw", Some(&actions));
+        let click = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_SECONDARY).build();
+        let weak = Rc::downgrade(&this);
+        let action = remove_action.clone();
+        click.connect_pressed(move |g, _, x, y| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(row) = this.list.row_at_y(y as i32) else { return };
+            g.set_state(gtk::EventSequenceState::Claimed);
+            this.list.select_row(Some(&row));
+            action.set_enabled(this.remove.is_visible());
+            // The click is in list coordinates; the menu points from the column.
+            let point = gtk::graphene::Point::new(x as f32, y as f32);
+            let p = this.menu.parent().and_then(|parent| this.list.compute_point(&parent, &point)).unwrap_or(point);
+            this.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(p.x() as i32, p.y() as i32, 1, 1)));
+            this.menu.popup();
+        });
+        this.list.add_controller(click);
+        let keys = gtk::EventControllerKey::new();
+        let weak = Rc::downgrade(&this);
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let Some(this) = weak.upgrade() else { return glib::Propagation::Proceed };
+            if key == gtk::gdk::Key::Delete && this.remove.is_visible() {
+                this.ask_remove();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        this.list.add_controller(keys);
+
         let weak = Rc::downgrade(&this);
         add_button.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -346,6 +405,10 @@ impl HardwareView {
             let count = self.state.borrow().rows.len() as i32;
             let index = if n < 0 { count + n } else { n };
             self.list.select_row(self.list.row_at_index(index).as_ref());
+        }
+        // VMNG_DEV_HW_REMOVE=1: remove the selected device through the menu action.
+        if std::env::var_os("VMNG_DEV_HW_REMOVE").is_some() {
+            let _ = WidgetExt::activate_action(&self.list, "hw.remove", None);
         }
         if std::env::var_os("VMNG_DEV_HW_ADD").is_some() {
             self.add_hardware();
