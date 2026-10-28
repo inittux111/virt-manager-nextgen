@@ -42,6 +42,17 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.2" date="2026-10-28">
+      <description>
+        <ul>
+          <li>Remember the window; drop the libguestfs switch</li>
+          <li>Document maintenance checks and Fedora upgrades</li>
+          <li>Use as_chunks for the screen preview pixels</li>
+          <li>Don't hold crate updates back on the Rust version</li>
+          <li>Add maintenance.sh and check the toolbox's Fedora release</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-10-28">
       <description>
         <ul>
