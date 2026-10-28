@@ -55,6 +55,47 @@ afterwards includes it.
 - On another computer, get the latest code first with `git pull`, then
   run `./build-rpm.sh`.
 
+## Keeping it secure and up to date
+
+The app's building blocks come from three places:
+
+- **System libraries** (GTK, libadwaita, libvirt, libosinfo, SPICE, VNC,
+  VTE, the OS list) come from Fedora. Your normal system updates
+  (`sudo dnf upgrade` or GNOME Software) keep them patched, and the app
+  uses the new versions right away. You don't need to rebuild.
+- **Rust crates** (about 55 small libraries) are built into the app. Fixes
+  in them only reach you through a new build.
+- **The build tools** live in the toolbox container.
+
+About once a month, or when GitHub emails you a **Dependabot alert** (they
+are switched on for this repository, which stays private), run:
+
+```sh
+./maintenance.sh
+./build-rpm.sh
+```
+
+`maintenance.sh` updates the build tools in the toolbox, moves the crates to
+their newest compatible releases, and checks them against the public list
+of known security problems (RustSec). It then builds the app, runs all the
+tests, and does an end-to-end check that creates and deletes a throwaway VM
+in your user session. If everything passes, it saves (commits) the updated
+crate list. `build-rpm.sh` then makes a new version with the fixes.
+
+If it reports a problem, it doesn't save anything. Ask Claude to look at
+the output, or just ask Claude to "do a maintenance check".
+
+### After upgrading Fedora
+
+After your computer moves to a new Fedora release, `build-rpm.sh` and
+`maintenance.sh` stop with a message: the toolbox still runs the old
+release, and packages built there may not fit. Recreate the toolbox with:
+
+```sh
+toolbox rm --force virt-manager-nextgen
+./build-rpm.sh
+```
+
 ## Going back to an older version
 
 Every version is tagged in git (`v0.1.0`, `v0.1.1`, …), and every package
