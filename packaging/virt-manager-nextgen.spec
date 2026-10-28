@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -89,5 +89,15 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Wed Oct 28 2026 Maarten van der Rijst <github@feedmebits.nl> - 0.1.1-1
+- Point CLAUDE.md at BUILDING.md
+- Add BUILDING.md and keep earlier packages between builds
+- Document the versioned RPM builds
+- Give every RPM build the next version number
+- Open each machine's console in its own window
+- Add build-rpm.sh: build the RPM in the toolbox from the host
+- Give the hardware list a full right-click menu
+- Show a live picture of a running machine's screen in its details
+
 * Wed Oct 28 2026 Maarten van der Rijst <claude@feedmebits.nl> - 0.1.0-1
 - First release
