@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["crates/xml", "crates/virt", "crates/osinfo", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/inittux111/virt-manager-nextgen"
+
+[workspace.dependencies]
+vmng-xml = { path = "crates/xml" }
+vmng-virt = { path = "crates/virt" }
+vmng-osinfo = { path = "crates/osinfo" }
+# GTK4 + libadwaita: the required UI toolkit.
+gtk = { package = "gtk4", version = "0.11", features = ["v4_20"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_8"] }
+# Thin, official bindings to the libvirt C library (the only way to talk to libvirt).
+virt = { version = "0.4.3", features = ["qemu"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
