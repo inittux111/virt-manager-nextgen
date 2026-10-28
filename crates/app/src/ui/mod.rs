@@ -9,6 +9,7 @@ mod new_vm;
 mod os_chooser;
 mod performance;
 pub mod preferences;
+pub mod shortcuts;
 mod snapshots;
 mod storage_view;
 mod title_menu;

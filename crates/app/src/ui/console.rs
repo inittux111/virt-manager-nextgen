@@ -197,7 +197,8 @@ impl ConsolePage {
         let resize_guest = osd_toggle("video-display-symbolic", "Resize the guest to the window");
         let osd_screen_tools = gtk::Box::builder().spacing(2).build();
         osd_screen_tools.append(&send);
-        osd_screen_tools.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        let tools_sep = gtk::Separator::new(gtk::Orientation::Vertical);
+        osd_screen_tools.append(&tools_sep);
         osd_screen_tools.append(&shot);
         osd_screen_tools.append(&scale);
         osd_screen_tools.append(&resize_guest);
@@ -217,14 +218,20 @@ impl ConsolePage {
             .margin_top(14)
             .css_classes(["osd", "console-toolbar"])
             .build();
+        let seps = [
+            tools_sep,
+            gtk::Separator::new(gtk::Orientation::Vertical),
+            gtk::Separator::new(gtk::Orientation::Vertical),
+        ];
         osd.append(&modes);
-        osd.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        osd.append(&seps[1]);
         osd.append(&osd_screen_tools);
-        osd.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        osd.append(&seps[2]);
         osd.append(&fullscreen);
         osd.update_property(&[gtk::accessible::Property::Label("Console controls")]);
 
         let caption = gtk::Label::builder()
+            .ellipsize(gtk::pango::EllipsizeMode::End)
             .halign(gtk::Align::Start)
             .valign(gtk::Align::End)
             .margin_start(16)
@@ -292,7 +299,40 @@ impl ConsolePage {
 
         let toolbar_view = adw::ToolbarView::builder().content(&overlay).build();
         toolbar_view.add_top_bar(&header);
-        let page = adw::NavigationPage::builder().tag(Self::TAG).title("Console").child(&toolbar_view).build();
+        // Narrow windows: shorter labels and fewer header extras.
+        let bin = adw::BreakpointBin::builder().width_request(360).height_request(300).child(&toolbar_view).build();
+        let compact = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            640.0,
+            adw::LengthUnit::Px,
+        ));
+        compact.add_setter(&logo, "visible", Some(&false.to_value()));
+        compact.add_setter(&details, "visible", Some(&false.to_value()));
+        if let Some(content) = send.child().and_downcast::<adw::ButtonContent>() {
+            compact.add_setter(&content, "label", Some(&"".to_value()));
+        }
+        compact.add_setter(&scale_label, "label", Some(&"".to_value()));
+        compact.add_setter(&mode_text, "label", Some(&"Text".to_value()));
+        for sep in &seps {
+            compact.add_setter(sep, "visible", Some(&false.to_value()));
+        }
+        let b = buttons.clone();
+        compact.connect_apply(move |_| b.set_compact(true));
+        let b = buttons.clone();
+        compact.connect_unapply(move |_| b.set_compact(false));
+        bin.add_breakpoint(compact);
+        let page = adw::NavigationPage::builder().tag(Self::TAG).title("Console").child(&bin).build();
+        // F11, unless the guest has the keyboard (then the guest gets it).
+        let keys = gtk::ShortcutController::new();
+        let f = fullscreen.clone();
+        keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("F11"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                f.set_active(!f.is_active());
+                glib::Propagation::Stop
+            })),
+        ));
+        page.add_controller(keys);
 
         let this = Rc::new(Self {
             page,
@@ -393,11 +433,17 @@ impl ConsolePage {
 
     fn wire(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        self.screen.connect_grab_changed(move |_| {
+        self.screen.connect_grab_changed(move |grabbed| {
+            super::shortcuts::set_app_enabled(!grabbed);
             if let Some(this) = weak.upgrade() {
                 this.update_caption();
             }
         });
+        // The text console gets every key too (like a terminal app would).
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_enter(|_| super::shortcuts::set_app_enabled(false));
+        focus.connect_leave(|_| super::shortcuts::set_app_enabled(true));
+        self.terminal.widget().add_controller(focus);
         let weak = Rc::downgrade(self);
         self.screen.connect_size_changed(move |w, h| {
             if let Some(this) = weak.upgrade() {

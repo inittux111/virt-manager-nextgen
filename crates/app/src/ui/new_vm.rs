@@ -211,6 +211,7 @@ impl Wizard {
         // Step indicator.
         let indicator = gtk::Box::builder().spacing(6).css_classes(["step-indicator"]).build();
         let mut steps = Vec::new();
+        let mut step_labels = Vec::new();
         for (i, label) in STEPS.iter().enumerate() {
             if i > 0 {
                 indicator
@@ -218,7 +219,9 @@ impl Wizard {
             }
             let s = gtk::Box::builder().spacing(6).css_classes(["step"]).build();
             s.append(&gtk::Label::builder().label((i + 1).to_string()).css_classes(["step-number"]).build());
-            s.append(&gtk::Label::builder().label(*label).css_classes(["step-label"]).build());
+            let l = gtk::Label::builder().label(*label).css_classes(["step-label"]).build();
+            s.append(&l);
+            step_labels.push(l);
             indicator.append(&s);
             steps.push(s);
         }
@@ -382,6 +385,19 @@ impl Wizard {
             .child(&toolbar)
             .build();
         dialog.set_default_widget(Some(&next));
+        // Narrow: numbered steps only (the page title says where you are),
+        // and the install methods stacked.
+        let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            600.0,
+            adw::LengthUnit::Px,
+        ));
+        for l in &step_labels {
+            narrow.add_setter(l, "visible", Some(&false.to_value()));
+        }
+        narrow.add_setter(&cards, "orientation", Some(&gtk::Orientation::Vertical.to_value()));
+        narrow.add_setter(&cards, "homogeneous", Some(&false.to_value()));
+        dialog.add_breakpoint(narrow);
 
         let w = Rc::new(Self {
             ctx,

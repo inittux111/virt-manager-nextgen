@@ -113,8 +113,14 @@ fn storage_page(ctx: &AddContext) -> Page {
         .group(&create)
         .build();
     let modes = gtk::Box::builder().spacing(10).homogeneous(true).build();
-    modes.append(&create);
-    modes.append(&existing);
+    for t in [&create, &existing] {
+        // Two lines rather than overflowing a narrow dialog.
+        if let Some(label) = t.child().and_downcast::<gtk::Label>() {
+            label.set_wrap(true);
+            label.set_justify(gtk::Justification::Center);
+        }
+        modes.append(t);
+    }
     b.prepend(&modes);
 
     let (device, devices) = choice("Device type", &[("disk", "Disk"), ("cdrom", "CD-ROM")]);
@@ -488,11 +494,13 @@ pub fn open(feedback: &Feedback, ctx: AddContext, done: impl Fn() + 'static) {
 
     let side =
         gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).width_request(230).child(&nav).build();
-    let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    body.append(&side);
-    body.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     stack.set_hexpand(true);
-    body.append(&stack);
+    stack.set_vexpand(true);
+    let split =
+        crate::ui::widgets::ListDetail::new(&side, &stack, 0, true, "Device types", 600.0, |b| b.clone().upcast());
+    let s = split.clone();
+    nav.connect_row_activated(move |_, _| s.show_detail());
+    let body = split.root().clone();
 
     let toolbar = adw::ToolbarView::builder().content(&body).bottom_bar_style(adw::ToolbarStyle::Raised).build();
     toolbar.add_top_bar(&adw::HeaderBar::new());

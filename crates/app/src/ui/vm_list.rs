@@ -133,8 +133,26 @@ impl VmList {
         this
     }
 
+    /// Lets the list fill the width (narrow windows, where it shows alone).
+    pub fn set_full_width(&self, full: bool) {
+        self.root.set_maximum_size(if full { i32::MAX } else { LIST_WIDTH });
+        self.root.set_tightening_threshold(if full { i32::MAX } else { LIST_WIDTH });
+    }
+
     pub fn connect_selected(&self, f: impl Fn(Option<&str>) + 'static) {
         self.on_select.replace(Some(Rc::new(f)));
+    }
+
+    /// Called when the person clicks (or presses Enter on) a VM, as opposed
+    /// to any selection change.
+    pub fn connect_activated(self: &Rc<Self>, f: impl Fn(&str) + 'static) {
+        let weak = Rc::downgrade(self);
+        self.list.connect_row_activated(move |_, row| {
+            let uuid = weak.upgrade().and_then(|this| this.by_row.borrow().get(row).cloned());
+            if let Some(uuid) = uuid {
+                f(&uuid);
+            }
+        });
     }
 
     pub fn connect_action(&self, f: impl Fn(&str, PowerAction) + 'static) {

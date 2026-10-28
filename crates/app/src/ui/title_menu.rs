@@ -135,7 +135,8 @@ fn heading(text: &str) -> gtk::Label {
 
 impl TitleMenu {
     pub fn new() -> Self {
-        let title = gtk::Label::builder().xalign(0.0).css_classes(["title"]).build();
+        let title =
+            gtk::Label::builder().xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::End).css_classes(["title"]).build();
         let subtitle = StatusLabel::new();
         subtitle.root.add_css_class("caption");
         subtitle.root.add_css_class("dim-label");

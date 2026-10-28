@@ -9,7 +9,10 @@ use gtk::{gio, glib};
 use vmng_virt::{DomainSummary, NewPool, PoolDetails, PoolKind, VolumeInfo};
 
 use super::feedback::Feedback;
-use super::widgets::{FormDialog, Meter, StatusLabel, Tone, boxed_list, icon_button, labeled_button, section_heading};
+use super::widgets::{
+    FormDialog, ListDetail, Meter, StatusLabel, Tone, boxed_list, icon_button, labeled_button, scrolled_page,
+    section_heading,
+};
 use crate::backend::Conn;
 use crate::format;
 
@@ -79,7 +82,9 @@ impl StorageView {
 
         // Right: the selected pool.
         let title = gtk::Label::builder().xalign(0.0).css_classes(["title-2"]).build();
-        let subtitle = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["dim-label"]).build();
+        // Wraps early so the buttons beside it keep their line.
+        let subtitle =
+            gtk::Label::builder().xalign(0.0).wrap(true).max_width_chars(30).css_classes(["dim-label"]).build();
         let status = StatusLabel::new();
         status.root.add_css_class("caption");
         status.root.add_css_class("dim-label");
@@ -92,7 +97,7 @@ impl StorageView {
         let browse = labeled_button("folder-open-symbolic", "Browse Files");
         let new_volume = labeled_button("list-add-symbolic", "New Volume");
         new_volume.add_css_class("suggested-action");
-        let buttons = gtk::Box::builder().spacing(8).valign(gtk::Align::Center).build();
+        let buttons = adw::WrapBox::builder().child_spacing(8).line_spacing(8).valign(gtk::Align::Center).build();
         for w in
             [refresh.upcast_ref::<gtk::Widget>(), toggle.upcast_ref(), browse.upcast_ref(), new_volume.upcast_ref()]
         {
@@ -139,13 +144,15 @@ impl StorageView {
         right.append(&vol_col);
         right.append(&settings);
         right.append(&danger);
-        let content = gtk::Box::builder().spacing(28).css_classes(["page-content"]).build();
-        content.append(&left);
-        content.append(&right);
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .child(&adw::Clamp::builder().maximum_size(1180).child(&content).build())
-            .build();
+        let split = ListDetail::new(&left, &right, 28, false, "Pools", 900.0, |b| scrolled_page(b, 1180));
+        // On its own the details column can be narrow: buttons go below.
+        let h = head.clone();
+        split.connect_layout(move |narrow| {
+            h.set_orientation(if narrow { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal });
+        });
+        let s = split.clone();
+        list.connect_row_activated(move |_, _| s.show_detail());
+        let scroller = split.root().clone();
 
         let empty_new = gtk::Button::builder()
             .label("Create a Pool")

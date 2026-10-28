@@ -8,7 +8,7 @@ use adw::prelude::*;
 use vmng_virt::{DomainSummary, HostInfo};
 
 use super::vm_list::logo_key;
-use super::widgets::{Meter, OsLogo, Sparkline, boxed_list, card, fact_row, section_heading};
+use super::widgets::{Meter, OsLogo, Sparkline, boxed_list, card, fact_row, reflow, section_heading};
 use crate::backend::{HISTORY_LEN, HostLive, Monitor};
 use crate::format;
 
@@ -41,7 +41,7 @@ fn graph_card(title: &str, metric: &str) -> GraphCard {
 type OpenVm = Rc<dyn Fn(&str)>;
 
 pub struct HostView {
-    pub root: gtk::ScrolledWindow,
+    pub root: adw::BreakpointBin,
     name: gtk::Label,
     specs: gtk::Label,
     cpu: GraphCard,
@@ -65,9 +65,19 @@ impl std::fmt::Debug for HostView {
 
 impl HostView {
     pub fn new() -> Rc<Self> {
-        let icon =
-            gtk::Image::builder().icon_name("computer-symbolic").pixel_size(26).css_classes(["host-icon"]).build();
-        let name = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["title-1"]).build();
+        let icon = gtk::Image::builder()
+            .icon_name("computer-symbolic")
+            .pixel_size(26)
+            .valign(gtk::Align::Center)
+            .css_classes(["host-icon"])
+            .build();
+        // Host names have no spaces, so they may break anywhere.
+        let name = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .css_classes(["title-1"])
+            .build();
         let specs = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["dim-label"]).build();
         let titles =
             gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(3).valign(gtk::Align::Center).build();
@@ -119,7 +129,7 @@ impl HostView {
         let (row, uri) = fact_row("Connection");
         software.append(&row);
         let software_col =
-            gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).width_request(320).build();
+            gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).width_request(300).build();
         software_col.append(&section_heading("Software"));
         software_col.append(&software);
 
@@ -135,11 +145,12 @@ impl HostView {
         body.append(&header);
         body.append(&cards);
         body.append(&bottom);
-        let root = gtk::ScrolledWindow::builder()
+        let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .child(&adw::Clamp::builder().maximum_size(1180).child(&body).build())
             .build();
+        let root = reflow(&scroller, &[&bottom], &[], 760.0);
 
         let osinfo_version = std::fs::read_to_string("/usr/share/osinfo/VERSION")
             .map(|v| v.trim().to_owned())

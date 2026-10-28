@@ -19,6 +19,7 @@ use super::vm_details::VmDetails;
 use super::vm_dialogs::{clone_dialog, delete_dialog, rename_dialog};
 use super::vm_list::VmList;
 use super::vm_page::{VmPage, VmTab};
+use super::widgets::ListDetail;
 use crate::backend::{Conn, Monitor, Sample};
 use crate::format;
 use crate::settings::Settings;
@@ -65,6 +66,7 @@ pub struct MainWindow {
     error_page: adw::StatusPage,
     loading_label: gtk::Label,
     content: gtk::Stack,
+    split: ListDetail,
     vm_list: Rc<VmList>,
     details: Rc<VmDetails>,
     banner: adw::Banner,
@@ -76,6 +78,7 @@ pub struct MainWindow {
     networks_view: Rc<super::networks_view::NetworksView>,
     storage_view: Rc<super::storage_view::StorageView>,
     new_button: gtk::Button,
+    new_wrap: gtk::Box,
     new_label: adw::ButtonContent,
     tray: RefCell<Option<crate::tray::Tray>>,
     actions: VmActions,
@@ -102,6 +105,14 @@ impl MainWindow {
             .width_request(360)
             .height_request(400)
             .build();
+        // Debug builds: `VMNG_DEV_SIZE=<w>x<h>` to review small windows.
+        #[cfg(debug_assertions)]
+        if let Some((w, h)) = std::env::var("VMNG_DEV_SIZE").ok().and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        }) {
+            window.set_default_size(w, h);
+        }
 
         // Header.
         let title_menu = TitleMenu::new();
@@ -111,7 +122,7 @@ impl MainWindow {
         let main_menu = gio::Menu::new();
         let section = gio::Menu::new();
         section.append(Some("Preferences"), Some("app.preferences"));
-        section.append(Some("Keyboard Shortcuts"), Some("win.show-help-overlay"));
+        section.append(Some("Keyboard Shortcuts"), Some("app.shortcuts"));
         section.append(Some("About Virtual Machine Manager"), Some("app.about"));
         main_menu.append_section(None, &section);
         let menu_button = gtk::MenuButton::builder()
@@ -131,11 +142,35 @@ impl MainWindow {
             .build();
         new_button.set_action_name(Some("win.new-vm"));
         new_button.set_tooltip_text(Some("Create a virtual machine"));
-        header.pack_end(&new_button);
+        // Narrow windows show the same button without its label.
+        let new_icon = gtk::Button::builder()
+            .icon_name("list-add-symbolic")
+            .valign(gtk::Align::Center)
+            .css_classes(["suggested-action"])
+            .visible(false)
+            .build();
+        new_button.bind_property("action-name", &new_icon, "action-name").sync_create().build();
+        new_button.bind_property("tooltip-text", &new_icon, "tooltip-text").sync_create().build();
+        let new_wrap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        new_wrap.append(&new_button);
+        new_wrap.append(&new_icon);
+        header.pack_end(&new_wrap);
+        let compact = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            560.0,
+            adw::LengthUnit::Px,
+        ));
+        compact.add_setter(&new_button, "visible", Some(&false.to_value()));
+        compact.add_setter(&new_icon, "visible", Some(&true.to_value()));
 
         let search_button =
             gtk::ToggleButton::builder().icon_name("system-search-symbolic").tooltip_text("Search machines").build();
-        header.pack_end(&search_button);
+        // Narrow windows drop the button (typing or Ctrl+F still searches).
+        let search_wrap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        search_wrap.append(&search_button);
+        header.pack_end(&search_wrap);
+        compact.add_setter(&search_wrap, "visible", Some(&false.to_value()));
+        window.add_breakpoint(compact);
 
         let search_entry = gtk::SearchEntry::builder().placeholder_text("Search machines").build();
         let search_bar = gtk::SearchBar::builder()
@@ -158,10 +193,9 @@ impl MainWindow {
                 .build(),
             Some("none"),
         );
-        let split = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        split.append(&vm_list.root);
-        split.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-        split.append(&content);
+        let split = ListDetail::new(&vm_list.root, &content, 0, true, "Machines", 720.0, |b| b.clone().upcast());
+        let list = vm_list.clone();
+        split.connect_layout(move |narrow| list.set_full_width(narrow));
 
         let loading_label = gtk::Label::builder().css_classes(["dim-label"]).build();
         let loading = gtk::Box::builder()
@@ -180,7 +214,8 @@ impl MainWindow {
             .build();
         let error_page = adw::StatusPage::builder().icon_name("network-offline-symbolic").child(&retry).build();
 
-        let empty_actions = gtk::Box::builder().spacing(12).halign(gtk::Align::Center).build();
+        let empty_actions =
+            adw::WrapBox::builder().child_spacing(12).line_spacing(12).halign(gtk::Align::Center).build();
         let empty_new = gtk::Button::builder()
             .label("New VM")
             .action_name("win.new-vm")
@@ -197,13 +232,18 @@ impl MainWindow {
             .child(&empty_actions)
             .build();
 
-        let machines = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
+        let machines =
+            gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).hhomogeneous(false).build();
         machines.add_named(&loading, Some("loading"));
         machines.add_named(&error_page, Some("error"));
         machines.add_named(&empty, Some("empty"));
-        machines.add_named(&split, Some("content"));
+        machines.add_named(split.root(), Some("content"));
 
-        let views = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).vexpand(true).build();
+        let views = gtk::Stack::builder()
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .hhomogeneous(false)
+            .vexpand(true)
+            .build();
         views.add_named(&machines, Some(View::Machines.id()));
         let host_view = super::host_view::HostView::new();
         views.add_named(&host_view.root, Some(View::Host.id()));
@@ -264,6 +304,7 @@ impl MainWindow {
             error_page,
             loading_label,
             content,
+            split,
             vm_list,
             details,
             banner,
@@ -275,6 +316,7 @@ impl MainWindow {
             networks_view,
             storage_view,
             new_button,
+            new_wrap,
             new_label,
             tray: RefCell::default(),
             actions,
@@ -334,18 +376,16 @@ impl MainWindow {
     }
 
     fn setup_actions(self: &Rc<Self>) {
-        #[cfg(debug_assertions)]
-        {
-            let dev_view = gio::SimpleAction::new("dev-view", Some(glib::VariantTy::STRING));
-            let weak = Rc::downgrade(self);
-            dev_view.connect_activate(move |_, p| {
-                let (Some(this), Some(id)) = (weak.upgrade(), p.and_then(|v| v.get::<String>())) else { return };
-                if let Some(v) = View::ALL.into_iter().find(|v| v.id() == id) {
-                    this.set_view(v);
-                }
-            });
-            self.window.add_action(&dev_view);
-        }
+        // `win.view::<id>` switches views (Ctrl+1…4).
+        let view = gio::SimpleAction::new("view", Some(glib::VariantTy::STRING));
+        let weak = Rc::downgrade(self);
+        view.connect_activate(move |_, p| {
+            let (Some(this), Some(id)) = (weak.upgrade(), p.and_then(|v| v.get::<String>())) else { return };
+            if let Some(v) = View::ALL.into_iter().find(|v| v.id() == id) {
+                this.set_view(v);
+            }
+        });
+        self.window.add_action(&view);
         let new_network = gio::SimpleAction::new("new-network", None);
         let weak = Rc::downgrade(self);
         new_network.connect_activate(move |_, _| {
@@ -403,6 +443,12 @@ impl MainWindow {
                 if let Some(uuid) = uuid {
                     this.fetch_guest(uuid.to_owned());
                 }
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.vm_list.connect_activated(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.split.show_detail();
             }
         });
         let weak = Rc::downgrade(self);
@@ -484,7 +530,7 @@ impl MainWindow {
             View::Networks => (Some("New Network"), "win.new-network", "Create a virtual network"),
             _ => (None, "win.new-vm", ""),
         };
-        self.new_button.set_visible(label.is_some());
+        self.new_wrap.set_visible(label.is_some());
         if let Some(label) = label {
             self.new_label.set_label(label);
             self.new_button.set_action_name(Some(action));
@@ -930,6 +976,7 @@ impl MainWindow {
             let uuid = self.state.borrow().domains.iter().find(|d| d.config.name == name).map(|d| d.uuid.clone());
             if let Some(uuid) = uuid {
                 self.vm_list.select(&uuid);
+                self.split.show_detail();
             }
         }
         if let Ok(view) = std::env::var("VMNG_DEV_VIEW") {
@@ -983,7 +1030,7 @@ impl MainWindow {
     #[cfg(debug_assertions)]
     fn set_view_later(&self, view: View) {
         // Called from a &self context; the window keeps an Rc via the actions.
-        let _ = WidgetExt::activate_action(&self.window, "win.dev-view", Some(&view.id().to_variant()));
+        let _ = WidgetExt::activate_action(&self.window, "win.view", Some(&view.id().to_variant()));
     }
 
     /// Shows or removes the tray icon to match Preferences.
