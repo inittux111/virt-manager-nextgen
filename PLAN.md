@@ -80,5 +80,9 @@ Packaging / installation
 - Build an RPM from the source code inside the toolbox container, so the app can be installed on the host with a single command (`sudo dnf install ./<package>.rpm`) and removed cleanly with dnf
 - The RPM installs the app with its menu entry and icon so it shows up in the GNOME app grid, and pulls in its runtime dependencies (GTK4, libadwaita, libvirt, libosinfo, osinfo-db, …) automatically
 
+Later (agreed, not yet done)
+- Design the app icon (the only place the app has its own identity color)
+- Polish that only shows in the real app: smooth animations, keyboard shortcuts, and every screen working well at small window sizes
+
 ## Autonomy 
 I don't know rust, so don't ask me about programming decisions, only ask me about features and when something needs to be tested. If you really need to ask something about rust or programming then explain it to me in easy to understand language so that with that information I can give you a good answer to help reach the end result software that I want to create.
