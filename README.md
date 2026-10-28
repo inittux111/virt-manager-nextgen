@@ -194,7 +194,11 @@ The app talks to libvirt. To run machines on the same computer, the libvirt
 daemon and QEMU must be installed and running:
 
 - Fedora: `sudo dnf install libvirt-daemon-kvm` (the RPM recommends it)
-- Debian: `sudo apt install libvirt-daemon-system qemu-system-x86`
+- Debian: `sudo apt install libvirt-daemon-system qemu-system-x86 qemu-utils
+  qemu-system-modules-spice` (the package recommends these, so `apt`
+  normally installs them). Debian keeps the disk tool (`qemu-utils`, needed to
+  create disks) and SPICE support (`qemu-system-modules-spice`, for VM
+  screens) in separate packages.
 
 To manage the system-wide machines (`QEMU/KVM · System`) without a password
 prompt each time, add yourself to the `libvirt` group and log in again:

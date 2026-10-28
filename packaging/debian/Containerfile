@@ -14,4 +14,4 @@ RUN apt-get update \
 # The toolchain lives in the image; Cargo's download cache in a podman
 # volume (/cargo), never in the home directory.
 ENV RUSTUP_HOME=/rustup CARGO_HOME=/cargo
-RUN rustup toolchain install stable --profile minimal && rustup default stable
+RUN rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable

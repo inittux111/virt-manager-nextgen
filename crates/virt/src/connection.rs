@@ -221,18 +221,17 @@ impl Connection {
         let dom = self.domain(uuid)?;
         let mut details = GuestDetails::default();
 
-        let agent = dom.interface_addresses(SRC_AGENT, 0);
+        let agent = crate::guest::interface_addresses(&dom, SRC_AGENT);
         details.agent_connected = agent.is_ok();
-        let ifaces = agent.or_else(|_| dom.interface_addresses(SRC_LEASE, 0)).unwrap_or_default();
+        let ifaces = agent.or_else(|_| crate::guest::interface_addresses(&dom, SRC_LEASE)).unwrap_or_default();
         let mut v4 = Vec::new();
         let mut v6 = Vec::new();
         for iface in ifaces.iter().filter(|i| i.name != "lo") {
-            for a in &iface.addrs {
-                let ip = &a.addr;
+            for (ipv6, ip) in &iface.addrs {
                 if ip.starts_with("127.") || ip == "::1" || ip.starts_with("fe80:") {
                     continue;
                 }
-                if a.typed == 0 { v4.push(ip.clone()) } else { v6.push(ip.clone()) }
+                if *ipv6 { v6.push(ip.clone()) } else { v4.push(ip.clone()) }
             }
         }
         details.addresses = v4.into_iter().chain(v6).collect();

@@ -73,6 +73,75 @@ impl GuestInfo {
     }
 }
 
+/// One network interface as the guest (or DHCP leases) reports it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GuestInterface {
+    pub name: String,
+    /// (`true` for IPv6, address) pairs.
+    pub addrs: Vec<(bool, String)>,
+}
+
+unsafe extern "C" {
+    // The C library's free(), for the array libvirt allocates below.
+    fn free(ptr: *mut std::ffi::c_void);
+}
+
+/// Reads a C string that may be null (libvirt leaves e.g. the hardware
+/// address of Windows' loopback interface empty).
+///
+/// # Safety
+/// `p` is null or points to a NUL-terminated string.
+unsafe fn opt_string(p: *const std::ffi::c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        // SAFETY: non-null and NUL-terminated per the caller.
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
+}
+
+/// The guest's interface addresses from `source` (0 = DHCP leases, 1 = the
+/// guest agent). Called directly rather than through the `virt` crate,
+/// whose version dereferences fields libvirt may leave null.
+pub(crate) fn interface_addresses(dom: &Domain, source: u32) -> Result<Vec<GuestInterface>> {
+    let mut ifaces: *mut sys::virDomainInterfacePtr = ptr::null_mut();
+    // SAFETY: valid domain and out pointer; on success libvirt allocates an
+    // array of `n` interfaces, each freed with virDomainInterfaceFree, and
+    // the array with free().
+    let n = unsafe { sys::virDomainInterfaceAddresses(dom.as_ptr(), &mut ifaces, source, 0) };
+    if n < 0 {
+        return Err(virt::error::Error::last_error().into());
+    }
+    let mut out = Vec::new();
+    if ifaces.is_null() {
+        return Ok(out);
+    }
+    // SAFETY: `ifaces` holds `n` interface pointers; each may still carry
+    // null strings, which opt_string handles.
+    unsafe {
+        for &iface in std::slice::from_raw_parts(ifaces, usize::try_from(n).unwrap_or(0)) {
+            if iface.is_null() {
+                continue;
+            }
+            let i = &*iface;
+            let mut addrs = Vec::new();
+            if !i.addrs.is_null() {
+                for a in std::slice::from_raw_parts(i.addrs, i.naddrs as usize) {
+                    let addr = opt_string(a.addr);
+                    if !addr.is_empty() {
+                        // VIR_IP_ADDR_TYPE_IPV6 = 1
+                        addrs.push((a.type_ == 1, addr));
+                    }
+                }
+            }
+            out.push(GuestInterface { name: opt_string(i.name), addrs });
+            sys::virDomainInterfaceFree(iface);
+        }
+        free(ifaces.cast());
+    }
+    Ok(out)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ParamValue {
     Num(u64),

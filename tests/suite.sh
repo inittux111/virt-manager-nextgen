@@ -42,7 +42,7 @@ cat >"$OUT/vmng-test-ui.xml" <<XML
 <input type="tablet" bus="usb"/><graphics type="spice" autoport="yes"/><video><model type="virtio"/></video>
 </devices></domain>
 XML
-virsh -c "$VM_URI" create "$OUT/vmng-test-ui.xml" >"$OUT/ui-vm.log" 2>&1
+check screens-test-vm-starts virsh -c "$VM_URI" create "$OUT/vmng-test-ui.xml"
 
 # The app's settings: connect to VM_URI, plain Adwaita (no custom theme).
 config="$OUT/config"
@@ -81,5 +81,5 @@ check screen-shortcuts screen shortcuts VMNG_DEV_ACTION=app.shortcuts
 check screen-dark screen dark "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-dark
 check screen-high-contrast screen high-contrast "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-light ADW_DEBUG_HIGH_CONTRAST=1
 
-virsh -c "$VM_URI" destroy vmng-test-ui >>"$OUT/ui-vm.log" 2>&1
+virsh -c "$VM_URI" destroy vmng-test-ui >"$OUT/screens-test-vm-stop.log" 2>&1
 ! grep -q '^FAIL' "$OUT/results.txt"

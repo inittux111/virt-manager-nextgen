@@ -5,6 +5,7 @@ ARG BUILD_IMAGE=localhost/virt-manager-nextgen-debian:trixie
 FROM ${BUILD_IMAGE}
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libvirt-daemon-system libvirt-clients qemu-system-x86 ovmf swtpm swtpm-tools \
+        libvirt-daemon-system libvirt-clients qemu-system-x86 qemu-utils \
+        qemu-system-modules-spice ovmf swtpm swtpm-tools librsvg2-common \
         osinfo-db xorriso dnsmasq-base iproute2 nftables \
     && rm -rf /var/lib/apt/lists/*

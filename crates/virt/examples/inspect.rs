@@ -25,6 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for disk in d.config.disks.iter().filter(|x| !x.is_cdrom()) {
             println!("   {} usage {:?}", disk.target, conn.disk_usage(&d.uuid, &disk.target));
         }
+        if d.state.is_active() {
+            println!("   guest {:?}", conn.guest_details(&d.uuid));
+        }
     }
     println!("{:#?}", conn.domain_stats(Default::default())?);
     Ok(())

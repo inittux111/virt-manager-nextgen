@@ -21,8 +21,10 @@ podman build --quiet --build-arg BUILD_IMAGE="localhost/virt-manager-nextgen-deb
 git ls-files -z --cached --others --exclude-standard | tar --null -T - -c | tar -x -C "$src"
 
 runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# --privileged (still within this user's rootless namespace) lets libvirt set
+# up the test network's bridge inside the container.
 podman run --rm --name vmng-test-debian \
-    --device /dev/kvm --cap-add NET_ADMIN --cap-add NET_RAW --security-opt label=disable \
+    --privileged --device /dev/kvm --security-opt label=disable \
     -e XDG_RUNTIME_DIR=/run/vmng -e WAYLAND_DISPLAY=vmng-test \
     -v "$runtime/vmng-test:/run/vmng/vmng-test" \
     -v "$src:/src" -v "$OUT:/out" -v virt-manager-nextgen-cargo:/cargo \
