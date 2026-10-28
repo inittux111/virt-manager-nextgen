@@ -82,6 +82,49 @@ podman rmi localhost/virt-manager-nextgen-debian:trixie
 podman volume rm virt-manager-nextgen-cargo
 ```
 
+## The build scripts
+
+Both scripts run on your computer and do the actual building in a container.
+By default they build the code as it is committed in the project folder
+(uncommitted edits are left out, with a note).
+
+### `./build-rpm.sh`: Fedora RPM
+
+| Command                            | What it does                                            |
+|------------------------------------|---------------------------------------------------------|
+| `./build-rpm.sh`                   | next version for fixes, e.g. 0.1.6 → 0.1.7, and build    |
+| `./build-rpm.sh minor`             | next version for new features, e.g. 0.1.7 → 0.2.0        |
+| `./build-rpm.sh major`             | next major version, e.g. 0.2.0 → 1.0.0                   |
+| `./build-rpm.sh 1.4.0`             | a version number of your choice                          |
+| `./build-rpm.sh --rebuild`         | build the current version again, no new number           |
+| `./build-rpm.sh --latest`          | first fetch the newest code from GitHub, then as above   |
+
+`--latest` combines with the others, e.g. `./build-rpm.sh minor --latest`.
+Each new version is committed and tagged in git (`v0.1.7`, …), with the
+changes since the previous version as its "what's new" notes. The package
+lands in `target/rpmbuild/RPMS/x86_64/`; earlier ones stay there.
+
+### `./build-deb.sh`: Debian package
+
+| Command                            | What it does                                            |
+|------------------------------------|---------------------------------------------------------|
+| `./build-deb.sh`                   | build for Debian 13 (trixie)                             |
+| `./build-deb.sh testing`           | build for another Debian release (13 or newer)           |
+| `./build-deb.sh --latest`          | first fetch the newest code from GitHub, then as above   |
+
+`--latest` combines with a release, e.g. `./build-deb.sh testing --latest`.
+The package keeps the current version number (set by `build-rpm.sh`) and
+lands in `target/debian/`.
+
+### `--latest`: the newest code from GitHub
+
+With `--latest`, the scripts first update the project folder to the newest
+code on GitHub, then build that. Use it on a computer where you don't edit
+the code, to build whatever was pushed last. To keep your work safe, it
+stops without changing anything when the folder has uncommitted changes,
+or when the folder and GitHub both have changes the other doesn't (they
+then need merging by hand).
+
 ## Running VMs
 
 The app talks to libvirt. To run machines on the same computer, the libvirt

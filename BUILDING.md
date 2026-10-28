@@ -40,6 +40,9 @@ stay as they are.
 | `./build-rpm.sh 1.4.0`       | → 1.4.0         | a number of your choice             |
 | `./build-rpm.sh --rebuild`   | stays the same  | the same version again, no new number |
 
+Add `--latest` to any of these to fetch the newest code from GitHub first
+(see the README).
+
 `dnf install` only upgrades to a higher number. To put a `--rebuild` of the
 version you already have on top of it, use `sudo dnf reinstall ./…rpm`.
 

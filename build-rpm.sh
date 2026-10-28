@@ -8,6 +8,9 @@
 #   ./build-rpm.sh 1.2.3      a version of your choice
 #   ./build-rpm.sh --rebuild  the current version again, no new number
 #
+# Add --latest (e.g. `./build-rpm.sh --latest`, `./build-rpm.sh minor
+# --latest`) to fetch the newest code from GitHub first.
+#
 # Each new version is committed and tagged in git (packaging/new-version.sh),
 # with the commit titles since the last version as its "what's new".
 # The first run creates the container (same Fedora release as this
@@ -16,9 +19,26 @@
 # changes are built.
 set -eu
 
+# --latest may come anywhere; the remaining argument is the version choice.
+latest=false
+choice=""
+for arg in "$@"; do
+    case $arg in
+        --latest) latest=true ;;
+        *) choice=$arg ;;
+    esac
+done
+
 box=virt-manager-nextgen
 spec=packaging/virt-manager-nextgen.spec
 cd "$(dirname "$0")"
+
+# Fetch the newest code, then start again with it (this script may have
+# changed too).
+if $latest; then
+    packaging/update-sources.sh
+    exec ./build-rpm.sh ${choice:+"$choice"}
+fi
 
 if ! command -v toolbox >/dev/null; then
     echo "toolbox is not installed (sudo dnf install toolbox)." >&2
@@ -43,8 +63,8 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "Note: there are uncommitted changes; they are not in this build." >&2
 fi
 
-if [ "${1:-}" != "--rebuild" ]; then
-    packaging/new-version.sh "$@"
+if [ "$choice" != "--rebuild" ]; then
+    packaging/new-version.sh ${choice:+"$choice"}
 fi
 
 toolbox run -c "$box" packaging/build-rpm.sh
@@ -55,6 +75,6 @@ echo
 echo "Built $rpm"
 echo "Install or upgrade it with:"
 echo "  sudo dnf install ./$rpm"
-if [ "${1:-}" != "--rebuild" ]; then
+if [ "$choice" != "--rebuild" ]; then
     echo "(The new version is committed and tagged here; 'git push --follow-tags' publishes it.)"
 fi
