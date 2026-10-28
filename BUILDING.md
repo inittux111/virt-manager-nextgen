@@ -55,6 +55,15 @@ afterwards includes it.
 - On another computer, get the latest code first with `git pull`, then
   run `./build-rpm.sh`.
 
+## Optional packages
+
+The package doesn't require these, but some features need them:
+
+- **`swtpm` and `swtpm-tools`**: the software TPM 2.0 that Windows 11 needs
+  (the "TPM 2.0" switch in the New VM wizard and Add Hardware → TPM).
+  Without them, a VM with a TPM won't start. Install them with
+  `sudo dnf install swtpm swtpm-tools`.
+
 ## Keeping it secure and up to date
 
 The app's building blocks come from three places:
