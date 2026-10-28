@@ -24,6 +24,8 @@ A modern rewrite of virt-manager: a desktop front-end for QEMU/KVM through libvi
 
 The approved UI mockup is the design reference: https://claude.ai/artifact/R9CVZEsdNRp2Fx4fCuPz3w (read it with the Artifact tool, not a web fetch). It covers the main window (VM list + details panel + host summary, title-menu view/connection switcher), console, VM hardware and snapshots pages, Add Hardware, Preferences, New VM wizard, host overview, network and storage lists and settings, and empty/error/progress/confirmation states. Layout and behavior decisions are also recorded in `PLAN.md`.
 
+**Consistency:** every screen follows the same patterns: the same layout, spacing, button placement (primary action in the same spot), wording, icons, dialogs and confirmation style. A new screen reuses existing building blocks (shared widgets/components in code) rather than inventing its own look.
+
 The mockup is HTML that imitates libadwaita. Its colors are hand-copied theme values for previewing only. In the real app every color must come from the theme. Check UI work in Adwaita light, Adwaita dark, High Contrast and the user's Abyss theme.
 
 ## Skills
