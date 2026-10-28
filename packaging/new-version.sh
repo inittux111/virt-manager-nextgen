@@ -6,14 +6,15 @@
 # Updates Cargo.toml, Cargo.lock, the spec (Version + changelog) and the
 # AppStream release list. The "what's new" notes are the commit titles since
 # the previous version's tag. Then commits those files and tags vX.Y.Z.
-# build-rpm.sh calls this before every build.
+# build-rpm.sh and build-deb.sh call this before every build (not with
+# --rebuild). It needs only git and standard tools.
 set -eu
 
 cd "$(dirname "$0")/.."
 spec=packaging/virt-manager-nextgen.spec
 metainfo=data/io.github.inittux111.VirtManagerNextgen.metainfo.xml
 
-current=$(sed -n 's/^Version: *//p' "$spec")
+current=$(packaging/version.sh)
 IFS=. read -r major minor patch <<EOF
 $current
 EOF
@@ -36,9 +37,14 @@ notes=$(git log --no-merges --format=%s ${since:+"$since"..HEAD} | grep -v '^Rel
 
 echo "Version $current → $next"
 
-# Cargo.toml (the workspace version line) and the lock file.
-sed -i "s/^version = \"$current\"/version = \"$next\"/" Cargo.toml
-toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo update --workspace --offline --quiet
+# Cargo.toml (the workspace version line) and the lock file's entries for
+# the app's own crates; plain text edits, so no build tools are needed.
+sed -i "/^\[workspace.package\]/,/^\[/s/^version = \"$current\"/version = \"$next\"/" Cargo.toml
+awk -v next_version="$next" '
+    /^name = "(virt-manager-nextgen|vmng-[a-z]+)"$/ { own = 1; print; next }
+    own && /^version = / { print "version = \"" next_version "\""; own = 0; next }
+    { own = 0; print }
+' Cargo.lock >Cargo.lock.new && mv Cargo.lock.new Cargo.lock
 
 # The spec: version, and a changelog entry on top.
 who="$(git config user.name) <$(git config user.email)>"

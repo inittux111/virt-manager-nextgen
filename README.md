@@ -72,8 +72,6 @@ sudo apt install ./virt-manager-nextgen_<version>_amd64.deb
 `apt` installs the libraries it needs, and by default also the libvirt
 daemon and QEMU (recommended, to run machines on that computer). `swtpm`
 (for TPM 2.0) is only suggested: install it yourself if you need it.
-`build-deb.sh` doesn't make a new version number: it packs the current one,
-which `build-rpm.sh` sets.
 
 To remove the build container image and cache later:
 
@@ -85,8 +83,15 @@ podman volume rm virt-manager-nextgen-cargo
 ## The build scripts
 
 Both scripts run on your computer and do the actual building in a container.
-By default they build the code as it is committed in the project folder
-(uncommitted edits are left out, with a note).
+They are independent of each other: `build-rpm.sh` needs only `toolbox`,
+`build-deb.sh` only `podman` (plus `git` for both). Each makes its own new
+version number by default, with the same options. By default they build the
+code as it is committed in the project folder (uncommitted edits are left
+out, with a note).
+
+To build **both packages for the same version**, run one script normally and
+the other with `--rebuild`, e.g. `./build-rpm.sh minor` then
+`./build-deb.sh --rebuild`.
 
 ### `./build-rpm.sh`: Fedora RPM
 
@@ -108,12 +113,16 @@ lands in `target/rpmbuild/RPMS/x86_64/`; earlier ones stay there.
 
 | Command                            | What it does                                            |
 |------------------------------------|---------------------------------------------------------|
-| `./build-deb.sh`                   | build for Debian 13 (trixie)                             |
+| `./build-deb.sh`                   | next version for fixes, build for Debian 13 (trixie)     |
+| `./build-deb.sh minor`             | next version for new features                            |
+| `./build-deb.sh major`             | next major version                                       |
+| `./build-deb.sh 1.4.0`             | a version number of your choice                          |
+| `./build-deb.sh --rebuild`         | build the current version again, no new number           |
 | `./build-deb.sh testing`           | build for another Debian release (13 or newer)           |
 | `./build-deb.sh --latest`          | first fetch the newest code from GitHub, then as above   |
 
-`--latest` combines with a release, e.g. `./build-deb.sh testing --latest`.
-The package keeps the current version number (set by `build-rpm.sh`) and
+Options combine, e.g. `./build-deb.sh testing minor --latest`. New versions
+are committed and tagged the same way as with `build-rpm.sh`. The package
 lands in `target/debian/`.
 
 ### `--latest`: the newest code from GitHub

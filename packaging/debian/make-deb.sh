@@ -5,7 +5,7 @@ set -eu
 
 app_id=io.github.inittux111.VirtManagerNextgen
 cd /work/src
-version=$(sed -n 's/^Version: *//p' packaging/virt-manager-nextgen.spec)
+version=$(sh packaging/version.sh)
 arch=$(dpkg --print-architecture)
 
 # GNOME 49 libraries (GTK 4.20, libadwaita 1.8) get the full app; Debian 13's

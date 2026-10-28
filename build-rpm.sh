@@ -69,7 +69,7 @@ fi
 
 toolbox run -c "$box" packaging/build-rpm.sh
 
-version=$(sed -n 's/^Version: *//p' "$spec")
+version=$(packaging/version.sh)
 rpm=$(ls target/rpmbuild/RPMS/*/virt-manager-nextgen-"$version"-*.rpm)
 echo
 echo "Built $rpm"
