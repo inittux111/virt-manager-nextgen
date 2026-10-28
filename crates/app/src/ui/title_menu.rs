@@ -31,6 +31,16 @@ impl View {
         }
     }
 
+    /// The short name on the view's header tab.
+    pub fn tab_title(self) -> &'static str {
+        match self {
+            Self::Machines => "Machines",
+            Self::Host => "Host",
+            Self::Networks => "Networks",
+            Self::Storage => "Storage",
+        }
+    }
+
     pub fn icon(self) -> &'static str {
         match self {
             Self::Machines => "computer-symbolic",
@@ -102,6 +112,8 @@ struct Handlers {
 /// The title button and its popover.
 #[derive(Clone)]
 pub struct TitleMenu {
+    // Not shown on the gnome-style branch (views are header tabs there).
+    #[allow(dead_code)]
     pub button: gtk::MenuButton,
     title: gtk::Label,
     subtitle: StatusLabel,

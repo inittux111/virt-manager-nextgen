@@ -64,8 +64,8 @@ impl VmPage {
             "Performance",
             "utilities-system-monitor-symbolic",
         );
-        let switcher = adw::InlineViewSwitcher::builder().stack(&stack).build();
-        switcher.add_css_class("flat");
+        // GNOME's standard header tabs (icon and label).
+        let switcher = adw::ViewSwitcher::builder().stack(&stack).policy(adw::ViewSwitcherPolicy::Wide).build();
 
         let logo = OsLogo::new(30);
         let name = gtk::Label::builder()
