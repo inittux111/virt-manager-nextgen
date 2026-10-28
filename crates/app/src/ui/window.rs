@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use adw::prelude::*;
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 use vmng_virt::{CloneDiskMode, ConnectionKind, DomainSummary, GuestDetails, HostInfo, PowerAction};
 
 use super::feedback::Feedback;
@@ -26,6 +26,33 @@ use crate::settings::Settings;
 
 /// Guest agent details are refreshed every this many polls.
 const GUEST_POLL_EVERY: u64 = 5;
+/// The screen preview is refreshed every this many polls (a few seconds:
+/// each picture is a full screen image, which adds up on remote hosts).
+const PREVIEW_POLL_EVERY: u64 = 2;
+
+/// Turns a captured screen into something GTK can draw.
+fn screenshot_texture(shot: vmng_virt::Screenshot) -> Option<gdk::Texture> {
+    match shot {
+        vmng_virt::Screenshot::Rgb { width, height, pixels } => {
+            // Four bytes per pixel: renderers handle 3-byte RGB poorly.
+            let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
+            for p in pixels.chunks_exact(3) {
+                rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
+            }
+            Some(
+                gdk::MemoryTexture::new(
+                    i32::try_from(width).ok()?,
+                    i32::try_from(height).ok()?,
+                    gdk::MemoryFormat::R8g8b8a8,
+                    &glib::Bytes::from_owned(rgba),
+                    width as usize * 4,
+                )
+                .upcast(),
+            )
+        }
+        vmng_virt::Screenshot::Png(data) => gdk::Texture::from_bytes(&glib::Bytes::from_owned(data)).ok(),
+    }
+}
 
 #[derive(Debug)]
 enum Slot {
@@ -55,6 +82,8 @@ struct State {
     pending_console: Option<String>,
     /// Whether hardware virtualization is available on the host.
     kvm: Option<bool>,
+    /// A screen preview is being captured.
+    preview_busy: bool,
 }
 
 pub struct MainWindow {
@@ -338,6 +367,7 @@ impl MainWindow {
                 pending_page: None,
                 pending_console: None,
                 kvm: None,
+                preview_busy: false,
             }),
         });
 
@@ -442,6 +472,7 @@ impl MainWindow {
                 this.show_selected(uuid);
                 if let Some(uuid) = uuid {
                     this.fetch_guest(uuid.to_owned());
+                    this.fetch_preview(uuid.to_owned());
                 }
             }
         });
@@ -804,12 +835,48 @@ impl MainWindow {
         }
         let selected = self.vm_list.selected();
         self.show_selected(selected.as_deref());
+        if let Some(uuid) = &selected
+            && tick % PREVIEW_POLL_EVERY == 0
+        {
+            self.fetch_preview(uuid.clone());
+        }
         if tick % GUEST_POLL_EVERY == 0
             && let Some(uuid) = selected
         {
             self.fetch_guest(uuid);
         }
         self.update_chrome();
+    }
+
+    /// Captures the selected machine's screen for the details preview, when
+    /// that preview is actually on screen.
+    fn fetch_preview(self: &Rc<Self>, uuid: String) {
+        let showing = self.window.is_visible()
+            && self.state.borrow().view == View::Machines
+            && self.nav.visible_page().and_then(|p| p.tag()).is_some_and(|t| t == "main")
+            && !(self.split.is_narrow() && !self.split.showing_detail());
+        let running = self
+            .state
+            .borrow()
+            .domains
+            .iter()
+            .any(|d| d.uuid == uuid && d.state == vmng_virt::DomainState::Running && !d.config.graphics.is_empty());
+        if !showing || !running || self.state.borrow().preview_busy {
+            return;
+        }
+        let Some(conn) = self.current_conn() else { return };
+        self.state.borrow_mut().preview_busy = true;
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let id = uuid.clone();
+            let result = conn.call(move |c| c.screenshot(&id)).await;
+            let Some(this) = weak.upgrade() else { return };
+            this.state.borrow_mut().preview_busy = false;
+            // No picture (e.g. no display yet) keeps the "Running" placeholder.
+            if let Some(texture) = result.ok().and_then(|s| screenshot_texture(s)) {
+                this.details.set_screen(&uuid, &texture);
+            }
+        });
     }
 
     fn show_selected(&self, uuid: Option<&str>) {

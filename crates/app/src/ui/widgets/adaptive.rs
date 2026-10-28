@@ -113,6 +113,8 @@ impl ListDetail {
         back_bar.append(&back);
         let detail_column = gtk::Box::builder().orientation(gtk::Orientation::Vertical).hexpand(true).build();
         detail_column.append(&back_bar);
+        // The details fill the height, whatever their content asks for.
+        detail.set_vexpand(true);
         detail_column.append(detail);
 
         let wide = gtk::Box::builder().spacing(spacing).build();
@@ -201,6 +203,11 @@ impl ListDetail {
     /// Calls `f` with `true` when the layout turns narrow, `false` when wide.
     pub fn connect_layout(&self, f: impl Fn(bool) + 'static) {
         self.0.on_layout.borrow_mut().push(Box::new(f));
+    }
+
+    /// Whether the details are the pane in view (narrow layout).
+    pub fn showing_detail(&self) -> bool {
+        self.0.showing_detail.get()
     }
 
     /// Whether only one pane shows at a time.
