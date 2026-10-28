@@ -87,8 +87,8 @@ fn general_page(s: &Settings) -> adw::PreferencesPage {
     features.add(&tray);
     let color = switch(
         s,
-        "Coloured tray icon",
-        "Shows the app icon in colour instead of matching the top bar",
+        "Colored tray icon",
+        "Shows the app icon in color instead of matching the top bar",
         |p| p.tray_icon_color,
         |p, v| p.tray_icon_color = v,
     );

@@ -183,8 +183,51 @@ struct Inner {
     menu: RefCell<Item>,
     revision: Cell<u32>,
     tooltip: RefCell<String>,
-    icon: RefCell<String>,
+    icon: RefCell<TrayIcon>,
+    /// `icon` rendered for the `IconPixmap` property (an `a(iiay)`).
+    pixmaps: RefCell<Variant>,
     on_command: Box<dyn Fn(TrayCommand)>,
+}
+
+/// What the tray shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayIcon {
+    /// An icon theme name. Hosts may draw it single-colored to match the
+    /// panel (GNOME does).
+    Named(&'static str),
+    /// An SVG image, sent as pixels so it keeps its colors.
+    Image(&'static [u8]),
+}
+
+/// Sizes rendered for `IconPixmap`; the host picks the closest.
+const PIXMAP_SIZES: [i32; 4] = [22, 32, 48, 64];
+
+/// The `IconPixmap` value: ARGB32 images in network byte order.
+fn pixmaps(icon: TrayIcon) -> Variant {
+    let images = match icon {
+        TrayIcon::Named(_) => Vec::new(),
+        TrayIcon::Image(svg) => PIXMAP_SIZES.iter().filter_map(|&size| render_argb(svg, size)).collect(),
+    };
+    Variant::array_from_iter_with_type(VariantTy::new("(iiay)").expect("valid type"), images)
+}
+
+fn render_argb(svg: &'static [u8], size: i32) -> Option<Variant> {
+    let stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from_static(svg));
+    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, size, size, true, None::<&gio::Cancellable>)
+        .inspect_err(|e| glib::g_warning!("tray", "couldn't render the tray icon: {e}"))
+        .ok()?;
+    let (w, h) = (pixbuf.width(), pixbuf.height());
+    let (channels, stride) = (pixbuf.n_channels() as usize, pixbuf.rowstride() as usize);
+    let bytes = pixbuf.read_pixel_bytes();
+    let mut argb = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let p = &bytes[y * stride + x * channels..][..channels];
+            let a = if channels == 4 { p[3] } else { 255 };
+            argb.extend_from_slice(&[a, p[0], p[1], p[2]]);
+        }
+    }
+    Some((w, h, argb).to_variant())
 }
 
 /// The tray icon; removed again when dropped.
@@ -215,10 +258,10 @@ pub fn available(conn: &gio::DBusConnection) -> bool {
 }
 
 impl Tray {
-    /// Puts the icon in the tray. `icon` is an icon theme name.
+    /// Puts the icon in the tray.
     pub fn new(
         conn: &gio::DBusConnection,
-        icon: &str,
+        icon: TrayIcon,
         on_command: impl Fn(TrayCommand) + 'static,
     ) -> Result<Self, glib::Error> {
         let inner = Rc::new(Inner {
@@ -228,7 +271,8 @@ impl Tray {
             menu: RefCell::new(build_menu(&[])),
             revision: Cell::new(1),
             tooltip: RefCell::new(String::new()),
-            icon: RefCell::new(icon.to_owned()),
+            icon: RefCell::new(icon),
+            pixmaps: RefCell::new(pixmaps(icon)),
             on_command: Box::new(on_command),
         });
 
@@ -252,7 +296,10 @@ impl Tray {
             })
             .property(move |_, _, _, _, name| {
                 let inner = w2.upgrade();
-                let icon = inner.as_ref().map_or_else(String::new, |i| i.icon.borrow().clone());
+                let icon = inner.as_ref().map_or("", |i| match *i.icon.borrow() {
+                    TrayIcon::Named(name) => name,
+                    TrayIcon::Image(_) => "",
+                });
                 let tip = inner.as_ref().map_or_else(String::new, |i| i.tooltip.borrow().clone());
                 match name {
                     "Category" => "ApplicationStatus".to_variant(),
@@ -263,15 +310,14 @@ impl Tray {
                     "IconName" => icon.to_variant(),
                     // Development builds aren't installed, so point the host at our icons.
                     #[cfg(debug_assertions)]
-                    "IconThemePath" => crate::config::dev_tray_icon_dir(&icon).to_variant(),
+                    "IconThemePath" => crate::config::DEV_TRAY_ICON_DIR.to_variant(),
                     "ItemIsMenu" => false.to_variant(),
                     "Menu" => {
                         glib::variant::ObjectPath::try_from(MENU_PATH.to_owned()).expect("valid path").to_variant()
                     }
-                    "IconPixmap" => Variant::array_from_iter_with_type(
-                        VariantTy::new("(iiay)").expect("valid type"),
-                        Vec::<Variant>::new(),
-                    ),
+                    "IconPixmap" => {
+                        inner.as_ref().map_or_else(|| pixmaps(TrayIcon::Named("")), |i| i.pixmaps.borrow().clone())
+                    }
                     "ToolTip" => Variant::tuple_from_iter([
                         "".to_variant(),
                         Variant::array_from_iter_with_type(
@@ -319,13 +365,14 @@ impl Tray {
         Ok(Self(inner))
     }
 
-    /// Switches to another icon theme name.
-    pub fn set_icon(&self, icon: &str) {
+    /// Switches to another icon.
+    pub fn set_icon(&self, icon: TrayIcon) {
         let inner = &self.0;
         if *inner.icon.borrow() == icon {
             return;
         }
-        inner.icon.replace(icon.to_owned());
+        inner.icon.replace(icon);
+        inner.pixmaps.replace(pixmaps(icon));
         let _ = inner.conn.emit_signal(None, ITEM_PATH, "org.kde.StatusNotifierItem", "NewIcon", None);
     }
 
@@ -469,5 +516,18 @@ mod tests {
         let mut dedup = ids.clone();
         dedup.dedup();
         assert_eq!(ids, dedup);
+    }
+
+    #[test]
+    fn colored_icon_renders_as_argb() {
+        let v = pixmaps(TrayIcon::Image(crate::config::APP_ICON_SVG));
+        assert_eq!(v.n_children(), PIXMAP_SIZES.len());
+        let (w, h, data) = v.child_value(0).get::<(i32, i32, Vec<u8>)>().unwrap();
+        assert_eq!((w, h), (22, 22));
+        assert_eq!(data.len(), 22 * 22 * 4);
+        // Corners are transparent, the middle is opaque.
+        assert_eq!(data[0], 0);
+        assert_eq!(data[(11 * 22 + 11) * 4], 255);
+        assert_eq!(pixmaps(TrayIcon::Named("x")).n_children(), 0);
     }
 }

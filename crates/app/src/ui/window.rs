@@ -990,7 +990,11 @@ impl MainWindow {
     fn update_tray(self: &Rc<Self>) {
         let prefs = self.settings.get();
         let wanted = prefs.tray_icon;
-        let icon = if prefs.tray_icon_color { crate::config::APP_ID } else { crate::config::TRAY_ICON };
+        let icon = if prefs.tray_icon_color {
+            crate::tray::TrayIcon::Image(crate::config::APP_ICON_SVG)
+        } else {
+            crate::tray::TrayIcon::Named(crate::config::TRAY_ICON)
+        };
         let conn = self.window.application().and_then(|a| a.dbus_connection());
         let can = conn.as_ref().is_some_and(crate::tray::available);
         if !(wanted && can) {

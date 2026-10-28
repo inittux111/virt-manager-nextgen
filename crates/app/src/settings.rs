@@ -36,7 +36,7 @@ pub struct Prefs {
     pub stats_network: bool,
 
     pub tray_icon: bool,
-    /// Full-colour tray icon instead of one matching the top bar.
+    /// Full-color tray icon instead of one matching the top bar.
     pub tray_icon_color: bool,
     pub libguestfs_inspection: bool,
     pub xml_editing: bool,
