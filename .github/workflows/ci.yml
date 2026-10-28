@@ -60,7 +60,8 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends git ca-certificates rustup pkg-config build-essential \
             libgtk-4-dev libadwaita-1-dev libvirt-dev libosinfo-1.0-dev osinfo-db \
-            libspice-client-glib-2.0-dev libgvnc-1.0-dev libvte-2.91-gtk4-dev
+            libspice-client-glib-2.0-dev libgvnc-1.0-dev libvte-2.91-gtk4-dev \
+            librsvg2-common
           # Debian 13's own Rust is older than the app needs.
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
