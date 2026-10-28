@@ -36,6 +36,8 @@ pub struct Prefs {
     pub stats_network: bool,
 
     pub tray_icon: bool,
+    /// Full-colour tray icon instead of one matching the top bar.
+    pub tray_icon_color: bool,
     pub libguestfs_inspection: bool,
     pub xml_editing: bool,
 
@@ -69,6 +71,7 @@ impl Default for Prefs {
             stats_disk: true,
             stats_network: true,
             tray_icon: false,
+            tray_icon_color: false,
             libguestfs_inspection: false,
             xml_editing: false,
             console_autoconnect: true,
@@ -180,6 +183,7 @@ fn read(kf: &glib::KeyFile) -> Prefs {
         stats_disk: b("stats", "disk", d.stats_disk),
         stats_network: b("stats", "network", d.stats_network),
         tray_icon: b("general", "tray-icon", d.tray_icon),
+        tray_icon_color: b("general", "tray-icon-color", d.tray_icon_color),
         libguestfs_inspection: b("general", "libguestfs", d.libguestfs_inspection),
         xml_editing: b("general", "xml-editing", d.xml_editing),
         console_autoconnect: b("console", "autoconnect", d.console_autoconnect),
@@ -211,6 +215,7 @@ fn write(p: &Prefs) -> glib::KeyFile {
     kf.set_boolean("stats", "disk", p.stats_disk);
     kf.set_boolean("stats", "network", p.stats_network);
     kf.set_boolean("general", "tray-icon", p.tray_icon);
+    kf.set_boolean("general", "tray-icon-color", p.tray_icon_color);
     kf.set_boolean("general", "libguestfs", p.libguestfs_inspection);
     kf.set_boolean("general", "xml-editing", p.xml_editing);
     kf.set_boolean("console", "autoconnect", p.console_autoconnect);
@@ -242,6 +247,7 @@ mod tests {
             stats_interval_secs: 5,
             console_scaling: ConsoleScaling::FullscreenOnly,
             xml_editing: true,
+            tray_icon_color: true,
             ..Default::default()
         };
         let kf = write(&p);

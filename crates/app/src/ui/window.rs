@@ -988,19 +988,22 @@ impl MainWindow {
 
     /// Shows or removes the tray icon to match Preferences.
     fn update_tray(self: &Rc<Self>) {
-        let wanted = self.settings.get().tray_icon;
+        let prefs = self.settings.get();
+        let wanted = prefs.tray_icon;
+        let icon = if prefs.tray_icon_color { crate::config::APP_ID } else { crate::config::TRAY_ICON };
         let conn = self.window.application().and_then(|a| a.dbus_connection());
         let can = conn.as_ref().is_some_and(crate::tray::available);
         if !(wanted && can) {
             self.tray.replace(None);
             return;
         }
-        if self.tray.borrow().is_some() {
+        if let Some(tray) = self.tray.borrow().as_ref() {
+            tray.set_icon(icon);
             return;
         }
         let Some(conn) = conn else { return };
         let weak = Rc::downgrade(self);
-        match crate::tray::Tray::new(&conn, crate::config::TRAY_ICON, move |cmd| {
+        match crate::tray::Tray::new(&conn, icon, move |cmd| {
             if let Some(this) = weak.upgrade() {
                 this.tray_command(cmd);
             }

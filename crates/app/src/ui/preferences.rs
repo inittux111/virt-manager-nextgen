@@ -85,6 +85,18 @@ fn general_page(s: &Settings) -> adw::PreferencesPage {
         tray.set_sensitive(false);
     }
     features.add(&tray);
+    let color = switch(
+        s,
+        "Coloured tray icon",
+        "Shows the app icon in colour instead of matching the top bar",
+        |p| p.tray_icon_color,
+        |p, v| p.tray_icon_color = v,
+    );
+    tray.bind_property("active", &color, "sensitive").sync_create().build();
+    if !tray.is_sensitive() {
+        color.set_sensitive(false);
+    }
+    features.add(&color);
     let guestfs = switch(
         s,
         "Inspect guests with libguestfs",
