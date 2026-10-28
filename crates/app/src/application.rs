@@ -29,6 +29,15 @@ pub fn run() -> glib::ExitCode {
         setup_actions(app, &s);
     });
 
+    // Quitting (Ctrl+Q, the tray) doesn't close the window first, so the
+    // window's state is saved here too.
+    let w = window.clone();
+    app.connect_shutdown(move |_| {
+        if let Some(w) = w.borrow().as_ref() {
+            w.save_window_state();
+        }
+    });
+
     app.connect_activate(move |app| {
         if let Some(w) = window.borrow().as_ref() {
             w.window.present();
