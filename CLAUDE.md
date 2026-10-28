@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `PLAN.md` is the source of truth for goals, scope and the required feature list. Read it before starting any feature work.
 
-Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard ✔, 5 hardware details / Add Hardware / XML editing ✔, 6 console (SPICE/VNC/serial) ✔, 7 host overview, networks, storage, Preferences ✔, 8 graphs, guest agent, tray ✔, 9 app icon + polish, then the RPM. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
+Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard ✔, 5 hardware details / Add Hardware / XML editing ✔, 6 console (SPICE/VNC/serial) ✔, 7 host overview, networks, storage, Preferences ✔, 8 graphs, guest agent, tray ✔, 9 app icon + polish ✔, RPM ✔. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
 
 ## Commands
 
@@ -18,6 +18,8 @@ toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo test --works
 toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo clippy --workspace --all-targets
 toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo fmt --all
 ./target/debug/virt-manager-nextgen                                   # run on the host
+toolbox run -c virt-manager-nextgen packaging/build-rpm.sh            # the RPM, from the committed code (HEAD) → target/rpmbuild/RPMS/x86_64/
+sudo dnf install ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-*.rpm   # install it on the host (the user runs this)
 toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
 ./target/debug/examples/newvm_check qemu:///system default <iso>   # create/start/delete a throwaway vmng-test-newvm
 ./target/debug/examples/hw_check qemu:///system default <iso>   # device add/edit/live-update/remove on a throwaway vmng-test-hw
@@ -68,7 +70,7 @@ A modern rewrite of virt-manager: a desktop front-end for QEMU/KVM through libvi
 - **Dependencies:** add an external crate only when it is truly necessary, for security, performance and modularity reasons. Prefer the standard library and in-house code. Justify every new dependency.
 - **Code quality:** structure the code the way a professional Rust project would be structured, with a long-term maintainability focus. Security and performance are first-class concerns, especially since the app handles libvirt connections, XML and guest consoles.
 - **Development environment:** all builds and dev libraries live in a **toolbox container**. Never install development packages on the host. The project's toolbox is `virt-manager-nextgen` (Fedora 44, with Rust, GTK4, libadwaita, libvirt, libosinfo and rpm-build dev packages installed). Run cargo and system-package commands inside it, for example `toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo build`.
-- **Packaging:** the end deliverable includes an RPM built from source inside the toolbox (rpmbuild with a `.spec` file kept in the repo). The host is Fedora 44, so the toolbox must use the same Fedora release, or the RPM's library dependencies won't match the host. The RPM must install the binary, a `.desktop` file, the app icon and AppStream metainfo, and declare runtime `Requires`. Once the build exists, document the single command that produces the RPM in this file.
+- **Packaging:** the end deliverable includes an RPM built from source inside the toolbox (rpmbuild with a `.spec` file kept in the repo). The host is Fedora 44, so the toolbox must use the same Fedora release, or the RPM's library dependencies won't match the host. The RPM must install the binary, a `.desktop` file, the app icon and AppStream metainfo, and declare runtime `Requires`. The single command that produces it is `toolbox run -c virt-manager-nextgen packaging/build-rpm.sh` (spec: `packaging/virt-manager-nextgen.spec`; it vendors the crates and builds offline; bump `Version`/`%changelog` there and in `Cargo.toml` + the metainfo `<releases>` for a new release).
 - **Guest OS detection:** uses libosinfo with osinfo-db `20251212`.
 - **System tray:** AyatanaAppIndicator3 is not installed, so tray support may not work. Treat it as optional and degrade gracefully.
 
