@@ -1080,11 +1080,8 @@ impl MainWindow {
         glib::spawn_future_local(async move {
             let result = conn.call(move |c| c.power(&uuid, action)).await;
             let Some(this) = weak.upgrade() else { return };
-            match result {
-                Err(e) => {
-                    this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message())
-                }
-                Ok(()) => {}
+            if let Err(e) = result {
+                this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message());
             }
             this.refresh();
         });
