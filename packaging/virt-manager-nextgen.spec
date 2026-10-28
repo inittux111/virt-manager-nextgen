@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.1.6
+Version:        0.1.7
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -89,6 +89,16 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Wed Oct 28 2026 Maarten <github@feedmebits.nl> - 0.1.7-1
+- CI: install SVG support for the Debian 13 tests
+- Fix a crash with Windows guests that run the guest agent
+- Add the test pipeline, GitHub checks and Dependabot configuration
+- Add --latest to build-rpm.sh and build-deb.sh; document the scripts
+- Dark graph colours without @media; document Debian 13
+- Support Debian 13 (GTK 4.18, libadwaita 1.7)
+- Add README.md: building on Fedora (toolbox) and Debian (podman)
+- Add build-deb.sh: a Debian package built in a podman container
+
 * Wed Oct 28 2026 Maarten <github@feedmebits.nl> - 0.1.6-1
 - Remove the old title menu; update the docs
 - Try a stricter GNOME look (test branch)

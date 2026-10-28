@@ -42,6 +42,20 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.7" date="2026-10-28">
+      <description>
+        <ul>
+          <li>CI: install SVG support for the Debian 13 tests</li>
+          <li>Fix a crash with Windows guests that run the guest agent</li>
+          <li>Add the test pipeline, GitHub checks and Dependabot configuration</li>
+          <li>Add --latest to build-rpm.sh and build-deb.sh; document the scripts</li>
+          <li>Dark graph colours without @media; document Debian 13</li>
+          <li>Support Debian 13 (GTK 4.18, libadwaita 1.7)</li>
+          <li>Add README.md: building on Fedora (toolbox) and Debian (podman)</li>
+          <li>Add build-deb.sh: a Debian package built in a podman container</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.6" date="2026-10-28">
       <description>
         <ul>

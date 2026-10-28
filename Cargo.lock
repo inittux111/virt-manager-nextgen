@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "virt-manager-nextgen"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -747,18 +747,18 @@ dependencies = [
 
 [[package]]
 name = "vmng-display"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "gtk4",
 ]
 
 [[package]]
 name = "vmng-osinfo"
-version = "0.1.6"
+version = "0.1.7"
 
 [[package]]
 name = "vmng-virt"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "virt",
  "vmng-xml",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "vmng-xml"
-version = "0.1.6"
+version = "0.1.7"
 
 [[package]]
 name = "wasm-bindgen"
