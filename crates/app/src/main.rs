@@ -1,4 +1,4 @@
-//! Virtual Machine Manager: a modern desktop front-end for QEMU/KVM.
+//! Virtual Machines: a modern desktop front-end for QEMU/KVM.
 
 mod application;
 mod backend;

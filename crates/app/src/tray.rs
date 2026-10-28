@@ -143,7 +143,7 @@ fn build_menu(vms: &[TrayVm]) -> Item {
         children: Vec::new(),
     };
 
-    let mut children = vec![entry("Show Virtual Machine Manager", true, Some(TrayCommand::ShowWindow))];
+    let mut children = vec![entry("Show Virtual Machines", true, Some(TrayCommand::ShowWindow))];
     if !vms.is_empty() {
         children.push(separator(1000));
     }

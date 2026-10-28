@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.inittux111.VirtManagerNextgen</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Virtual Machines</name>
+  <summary>Create, run and manage QEMU/KVM virtual machines</summary>
+  <developer id="io.github.inittux111">
+    <name>Maarten</name>
+  </developer>
+  <description>
+    <p>
+      A modern desktop app for virtual machines on QEMU/KVM, through libvirt.
+      It covers what virt-manager does, with a GNOME-style interface.
+    </p>
+    <ul>
+      <li>Create machines from installer images, with the operating system detected automatically</li>
+      <li>Start, pause, shut down, clone and delete machines, and take snapshots</li>
+      <li>Use the machine's screen (SPICE or VNC) or its text console</li>
+      <li>Change hardware: processor, memory, disks, networks, displays and more</li>
+      <li>Manage the host's virtual networks and storage pools</li>
+      <li>Follow CPU, memory, disk and network use, and read guest details through the QEMU guest agent</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.inittux111.VirtManagerNextgen.desktop</launchable>
+  <provides>
+    <binary>virt-manager-nextgen</binary>
+  </provides>
+  <url type="homepage">https://github.com/inittux111/virt-manager-nextgen</url>
+  <url type="bugtracker">https://github.com/inittux111/virt-manager-nextgen/issues</url>
+  <url type="vcs-browser">https://github.com/inittux111/virt-manager-nextgen</url>
+  <branding>
+    <color type="primary" scheme_preference="light">#8de0d6</color>
+    <color type="primary" scheme_preference="dark">#0b625a</color>
+  </branding>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-28">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
