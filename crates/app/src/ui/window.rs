@@ -873,7 +873,7 @@ impl MainWindow {
             let Some(this) = weak.upgrade() else { return };
             this.state.borrow_mut().preview_busy = false;
             // No picture (e.g. no display yet) keeps the "Running" placeholder.
-            if let Some(texture) = result.ok().and_then(|s| screenshot_texture(s)) {
+            if let Some(texture) = result.ok().and_then(screenshot_texture) {
                 this.details.set_screen(&uuid, &texture);
             }
         });

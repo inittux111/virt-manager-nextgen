@@ -10,8 +10,13 @@ use gtk::{glib, graphene};
 pub fn maybe_screenshot(window: &impl IsA<gtk::Widget>) {
     let Some(path) = std::env::var_os("VMNG_SCREENSHOT") else { return };
     let delay = std::env::var("VMNG_SCREENSHOT_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(6);
-    let widget = window.clone().upcast::<gtk::Widget>();
+    let window = window.clone().upcast::<gtk::Widget>();
     glib::timeout_add_local_once(Duration::from_secs(delay), move || {
+        // `VMNG_DEV_SHOT_POPOVER=1`: capture the open popup menu instead
+        // (it is a separate surface, not part of the window's picture).
+        let widget = std::env::var_os("VMNG_DEV_SHOT_POPOVER")
+            .and_then(|_| find_popover(&window))
+            .unwrap_or_else(|| window.clone());
         if let Ok(class) = std::env::var("VMNG_DEV_TREE") {
             dump_tree(&widget, &class, 0, false);
         }
@@ -30,7 +35,7 @@ pub fn maybe_screenshot(window: &impl IsA<gtk::Widget>) {
         if saved.is_none() {
             eprintln!("screenshot failed");
         }
-        if let Some(app) = widget.root().and_downcast::<gtk::Window>().and_then(|w| w.application()) {
+        if let Some(app) = window.root().and_downcast::<gtk::Window>().and_then(|w| w.application()) {
             app.quit();
         }
     });
@@ -95,4 +100,18 @@ fn dump_tree(widget: &gtk::Widget, class: &str, depth: usize, inside: bool) {
         dump_tree(&c, class, depth + 1, inside);
         child = c.next_sibling();
     }
+}
+
+fn find_popover(widget: &gtk::Widget) -> Option<gtk::Widget> {
+    if widget.is::<gtk::Popover>() && widget.is_visible() {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if let Some(p) = find_popover(&c) {
+            return Some(p);
+        }
+        child = c.next_sibling();
+    }
+    None
 }
