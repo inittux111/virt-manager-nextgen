@@ -58,9 +58,9 @@ impl Meter {
         let f = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
         self.bar.set_value(f);
         if f >= WARN_AT {
-            self.root.add_css_class("warning");
+            self.root.add_css_class("nearly-full");
         } else {
-            self.root.remove_css_class("warning");
+            self.root.remove_css_class("nearly-full");
         }
         self.value.set_label(value);
     }

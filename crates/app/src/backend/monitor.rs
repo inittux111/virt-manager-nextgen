@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use vmng_virt::{BlockStats, DomainStats, DomainSummary, HostStats, PoolSummary};
 
-/// Number of samples kept for graphs.
-pub const HISTORY_LEN: usize = 60;
+/// Number of samples kept for graphs (5 minutes at the default 2 s).
+pub const HISTORY_LEN: usize = 150;
 
 /// One poll of a connection.
 #[derive(Clone, Debug)]
@@ -49,6 +49,11 @@ pub struct VmLive {
     pub mem: History,
     pub disk: History,
     pub net: History,
+    /// Separate directions, for the Performance tab.
+    pub disk_rd: History,
+    pub disk_wr: History,
+    pub net_in: History,
+    pub net_out: History,
     /// Per-disk allocation and capacity.
     pub disks: Vec<BlockStats>,
 }
@@ -135,6 +140,10 @@ impl Monitor {
                 live.mem = History::default();
                 live.disk = History::default();
                 live.net = History::default();
+                live.disk_rd = History::default();
+                live.disk_wr = History::default();
+                live.net_in = History::default();
+                live.net_out = History::default();
                 continue;
             };
             live.mem_used = st.memory_used().or(Some(dom.config.memory));
@@ -156,6 +165,10 @@ impl Monitor {
                     live.cpu.push(cpu);
                     live.disk.push(live.disk_read + live.disk_write);
                     live.net.push(live.net_rx + live.net_tx);
+                    live.disk_rd.push(live.disk_read);
+                    live.disk_wr.push(live.disk_write);
+                    live.net_in.push(live.net_rx);
+                    live.net_out.push(live.net_tx);
                 }
                 _ => {}
             }

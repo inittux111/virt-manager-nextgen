@@ -764,6 +764,7 @@ impl MainWindow {
                     && let Some(conn) = self.current_conn_in(&st)
                 {
                     self.vm_page.show(conn, d, st.host_info.clone());
+                    self.vm_page.performance.update(d, st.monitor.vm(&d.uuid), self.settings.get().stats_interval_secs);
                 }
                 if self.console_open() && self.console.is_open_for(&d.uuid) {
                     self.console.update(d);
@@ -982,8 +983,18 @@ impl MainWindow {
         match action {
             VmAction::Power(p) => self.request_power(uuid, p),
             VmAction::Console => self.open_console(&vm),
+            VmAction::SyncTime => {
+                let name = vm.display_name().to_owned();
+                let id = uuid.clone();
+                self.run_vm_op(
+                    move |c| c.sync_guest_time(&id),
+                    format!("Couldn't sync the clock of {name}"),
+                    format!("Synced the clock of {name} with this computer"),
+                );
+            }
             VmAction::Hardware => self.open_vm_page(&vm, VmTab::Hardware),
             VmAction::Snapshots => self.open_vm_page(&vm, VmTab::Snapshots),
+            VmAction::Performance => self.open_vm_page(&vm, VmTab::Performance),
             VmAction::TakeSnapshot => {
                 let weak = Rc::downgrade(self);
                 take_snapshot_dialog(&self.feedback, conn, &vm, move || {

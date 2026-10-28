@@ -78,6 +78,8 @@ pub struct GuestDetails {
     pub addresses: Vec<String>,
     /// Whether the qemu-guest-agent answered.
     pub agent_connected: bool,
+    /// What the agent reports about the guest system (if it answered).
+    pub info: Option<crate::guest::GuestInfo>,
 }
 
 /// An open libvirt connection. Cheap to share between threads behind an
@@ -236,6 +238,7 @@ impl Connection {
         details.addresses = v4.into_iter().chain(v6).collect();
         if details.agent_connected {
             details.hostname = dom.get_hostname(HOSTNAME_AGENT).ok().filter(|h| !h.is_empty());
+            details.info = crate::guest::guest_info(&dom).ok();
         }
         Ok(details)
     }

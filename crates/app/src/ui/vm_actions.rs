@@ -23,9 +23,11 @@ pub enum VmAction {
     Hardware,
     Snapshots,
     TakeSnapshot,
+    SyncTime,
+    Performance,
 }
 
-const ACTIONS: [(&str, VmAction); 16] = [
+const ACTIONS: [(&str, VmAction); 18] = [
     ("start", VmAction::Power(PowerAction::Start)),
     ("shutdown", VmAction::Power(PowerAction::Shutdown)),
     ("reboot", VmAction::Power(PowerAction::Reboot)),
@@ -42,6 +44,8 @@ const ACTIONS: [(&str, VmAction); 16] = [
     ("hardware", VmAction::Hardware),
     ("snapshots", VmAction::Snapshots),
     ("take-snapshot", VmAction::TakeSnapshot),
+    ("sync-time", VmAction::SyncTime),
+    ("performance", VmAction::Performance),
 ];
 
 type Handler = Rc<dyn Fn(&str, VmAction)>;
@@ -114,8 +118,10 @@ impl VmActions {
         self.enable("delete", true);
         self.enable("discard-saved", off && d.has_managed_save);
         self.enable("hardware", true);
+        self.enable("performance", true);
         self.enable("snapshots", d.persistent);
         self.enable("take-snapshot", d.persistent && s != DomainState::ShuttingDown);
+        self.enable("sync-time", s == DomainState::Running && d.config.has_guest_agent_channel);
     }
 }
 
@@ -165,6 +171,7 @@ pub fn context_menu() -> gio::Menu {
     open.append_item(&item("Open Console", "vm.console"));
     open.append_item(&item("Settings…", "vm.hardware"));
     open.append_item(&item("Snapshots", "vm.snapshots"));
+    open.append_item(&item("Performance", "vm.performance"));
     open.append_item(&item("Take Snapshot…", "vm.take-snapshot"));
     menu.append_section(None, &open);
     let manage = gio::Menu::new();
@@ -186,6 +193,7 @@ pub fn more_menu() -> gio::Menu {
     manage.append_item(&item("Clone…", "vm.clone"));
     manage.append_item(&item("Rename…", "vm.rename"));
     manage.append_item(&item("Discard Saved State", "vm.discard-saved"));
+    manage.append_item(&state_item("Sync Guest Clock", "vm.sync-time"));
     menu.append_section(None, &manage);
     let danger = gio::Menu::new();
     danger.append_item(&item("Delete…", "vm.delete"));

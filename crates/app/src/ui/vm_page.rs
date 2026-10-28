@@ -7,6 +7,7 @@ use adw::prelude::*;
 use vmng_virt::{DomainSummary, HostInfo};
 
 use super::hardware::HardwareView;
+use super::performance::PerformanceView;
 use super::snapshots::SnapshotsView;
 use super::vm_actions::VmButtons;
 use super::vm_list::{logo_key, os_label, state_text};
@@ -40,16 +41,13 @@ pub struct VmPage {
     buttons: VmButtons,
     pub snapshots: Rc<SnapshotsView>,
     pub hardware: Rc<HardwareView>,
+    pub performance: PerformanceView,
 }
 
 impl std::fmt::Debug for VmPage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VmPage").finish_non_exhaustive()
     }
-}
-
-fn later(icon: &str, title: &str, text: &str) -> adw::StatusPage {
-    adw::StatusPage::builder().icon_name(icon).title(title).description(text).build()
 }
 
 impl VmPage {
@@ -59,12 +57,9 @@ impl VmPage {
         let stack = adw::ViewStack::new();
         stack.add_titled_with_icon(&hardware.root, Some(VmTab::Hardware.id()), "Hardware", "emblem-system-symbolic");
         stack.add_titled_with_icon(&snapshots.root, Some(VmTab::Snapshots.id()), "Snapshots", "camera-photo-symbolic");
+        let performance = PerformanceView::new();
         stack.add_titled_with_icon(
-            &later(
-                "utilities-system-monitor-symbolic",
-                "Performance",
-                "Detailed performance graphs arrive in a later update.",
-            ),
+            &performance.root,
             Some(VmTab::Performance.id()),
             "Performance",
             "utilities-system-monitor-symbolic",
@@ -96,7 +91,7 @@ impl VmPage {
         let toolbar = adw::ToolbarView::builder().content(&stack).build();
         toolbar.add_top_bar(&header);
         let page = adw::NavigationPage::builder().tag(Self::TAG).title("Machine").child(&toolbar).build();
-        Self { page, stack, logo, name, status, buttons, snapshots, hardware }
+        Self { page, stack, logo, name, status, buttons, snapshots, hardware, performance }
     }
 
     pub fn select(&self, tab: VmTab) {

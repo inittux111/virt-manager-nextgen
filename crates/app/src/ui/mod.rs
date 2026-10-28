@@ -7,6 +7,7 @@ mod host_view;
 mod networks_view;
 mod new_vm;
 mod os_chooser;
+mod performance;
 pub mod preferences;
 mod snapshots;
 mod storage_view;

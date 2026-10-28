@@ -34,17 +34,23 @@ sparkline.memory  { color: var(--success-color); }
 sparkline.disk    { color: var(--orange-5); }
 sparkline.network { color: var(--purple-4); }
 sparkline.inactive { color: alpha(currentColor, 0.25); }
+chart.cpu { color: var(--accent-color); }
+chart.memory { color: var(--success-color); }
+chart.disk { color: var(--orange-5); }
+chart.network { color: var(--purple-4); }
 
 @media (prefers-color-scheme: dark) {
   sparkline.disk    { color: var(--orange-2); }
   sparkline.network { color: var(--purple-2); }
+  chart.disk { color: var(--orange-2); }
+  chart.network { color: var(--purple-2); }
 }
 
 /* ── Meters ──────────────────────────────────────────────────────────── */
 
 .meter levelbar trough { min-height: 6px; }
 .meter levelbar block.filled { background-color: var(--accent-bg-color); }
-.meter.warning:not(.no-warning) levelbar block.filled { background-color: var(--warning-bg-color); }
+.meter.nearly-full:not(.no-warning) levelbar block.filled { background-color: var(--warning-bg-color); }
 .meter .meter-value { font-weight: 600; }
 
 /* ── VM list ─────────────────────────────────────────────────────────── */
@@ -189,3 +195,17 @@ guest-screen:focus-visible { outline: none; }
   color: var(--accent-color);
   background-color: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
 }
+
+/* ── Performance ─────────────────────────────────────────────────────── */
+
+.chart-card { padding: 16px 18px; }
+.legend-swatch { min-width: 14px; min-height: 2px; background-color: currentColor; }
+.legend-swatch.cpu { color: var(--accent-color); }
+.legend-swatch.memory { color: var(--success-color); }
+.legend-swatch.disk { color: var(--orange-5); }
+.legend-swatch.network { color: var(--purple-4); }
+@media (prefers-color-scheme: dark) {
+  .legend-swatch.disk { color: var(--orange-2); }
+  .legend-swatch.network { color: var(--purple-2); }
+}
+.legend-swatch.dashed { background: none; border-top: 2px dashed currentColor; min-height: 0; }
