@@ -1,6 +1,7 @@
 //! Reusable building blocks. Every screen composes these so that the same
 //! idea always looks the same everywhere.
 
+mod chart;
 mod form_dialog;
 mod logo_data;
 mod meter;
@@ -8,6 +9,7 @@ mod os_logo;
 mod sparkline;
 mod status;
 
+pub use chart::Chart;
 pub use form_dialog::FormDialog;
 pub use meter::Meter;
 pub use os_logo::OsLogo;

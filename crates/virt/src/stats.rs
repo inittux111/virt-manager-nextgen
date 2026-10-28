@@ -117,7 +117,7 @@ pub struct HostStats {
 }
 
 #[derive(Clone, Copy)]
-enum Value {
+pub(crate) enum Value {
     Int(i64),
     UInt(u64),
     Double,
@@ -126,7 +126,7 @@ enum Value {
 }
 
 impl Value {
-    fn as_u64(self) -> Option<u64> {
+    pub(crate) fn as_u64(self) -> Option<u64> {
         match self {
             Self::UInt(v) => Some(v),
             Self::Int(v) => u64::try_from(v).ok(),
@@ -200,7 +200,7 @@ fn sorted<T>(map: HashMap<usize, T>) -> Vec<T> {
 
 /// # Safety
 /// `p` must be a valid typed parameter.
-unsafe fn read_value(p: &sys::virTypedParameter) -> Value {
+pub(crate) unsafe fn read_value(p: &sys::virTypedParameter) -> Value {
     // SAFETY: the union member read matches the tag in `type_`.
     unsafe {
         match p.type_ {
@@ -218,7 +218,7 @@ unsafe fn read_value(p: &sys::virTypedParameter) -> Value {
 
 /// # Safety
 /// `p` must be a valid typed parameter (strings are read from it).
-unsafe fn string_of(p: &sys::virTypedParameter) -> Option<String> {
+pub(crate) unsafe fn string_of(p: &sys::virTypedParameter) -> Option<String> {
     if p.type_ != PARAM_STRING {
         return None;
     }

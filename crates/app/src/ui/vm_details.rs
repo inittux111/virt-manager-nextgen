@@ -75,6 +75,12 @@ pub struct VmDetails {
     ip: gtk::Label,
     hostname: gtk::Label,
     agent: gtk::Label,
+    guest_os_row: adw::ActionRow,
+    guest_os: gtk::Label,
+    users_row: adw::ActionRow,
+    users: gtk::Label,
+    guest_fs_heading: gtk::Label,
+    guest_fs: gtk::Box,
     firmware: gtk::Label,
     network: gtk::Label,
     machine: gtk::Label,
@@ -169,6 +175,13 @@ impl VmDetails {
         facts.append(&row);
         let (row, agent) = fact_row("Guest agent");
         facts.append(&row);
+        // Only shown when the guest agent reports them.
+        let (guest_os_row, guest_os) = fact_row("Guest system");
+        guest_os_row.set_visible(false);
+        facts.append(&guest_os_row);
+        let (users_row, users) = fact_row("Signed in");
+        users_row.set_visible(false);
+        facts.append(&users_row);
         let (row, firmware) = fact_row("Firmware");
         facts.append(&row);
         let (row, network) = fact_row("Network");
@@ -186,6 +199,12 @@ impl VmDetails {
         let storage_col = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).hexpand(true).build();
         storage_col.append(&section_heading("Storage"));
         storage_col.append(&storage);
+        let guest_fs_heading = section_heading("Filesystems in the guest");
+        guest_fs_heading.set_visible(false);
+        let guest_fs = card(gtk::Orientation::Vertical, 0);
+        guest_fs.set_visible(false);
+        storage_col.append(&guest_fs_heading);
+        storage_col.append(&guest_fs);
         let pages = gtk::Box::builder().spacing(8).margin_top(4).build();
         let hardware = labeled_button("emblem-system-symbolic", "Hardware");
         hardware.set_action_name(Some("vm.hardware"));
@@ -230,6 +249,12 @@ impl VmDetails {
             ip,
             hostname,
             agent,
+            guest_os_row,
+            guest_os,
+            users_row,
+            users,
+            guest_fs_heading,
+            guest_fs,
             firmware,
             network,
             machine,
@@ -381,6 +406,14 @@ impl VmDetails {
         self.ip.set_label(&ip);
         self.hostname.set_label(&host);
         self.agent.set_label(agent);
+        let info = guest.filter(|_| active).and_then(|g| g.info.as_ref());
+        let os = info.and_then(|i| i.os_name.clone());
+        self.guest_os_row.set_visible(os.is_some());
+        self.guest_os.set_label(os.as_deref().unwrap_or_default());
+        let users = info.map(|i| i.users.join(", ")).unwrap_or_default();
+        self.users_row.set_visible(info.is_some());
+        self.users.set_label(if users.is_empty() { "Nobody" } else { &users });
+        self.show_guest_filesystems(info.map(|i| i.filesystems.as_slice()).unwrap_or_default());
         self.firmware.set_label(match d.config.firmware {
             Some(Firmware::Uefi { secure_boot: true }) => "UEFI · Secure Boot",
             Some(Firmware::Uefi { secure_boot: false }) => "UEFI",
@@ -419,6 +452,32 @@ impl VmDetails {
             self.autostart_guard.replace(false);
         }
         self.autostart.set_sensitive(d.persistent);
+    }
+
+    fn show_guest_filesystems(&self, filesystems: &[vmng_virt::GuestFilesystem]) {
+        while let Some(c) = self.guest_fs.first_child() {
+            self.guest_fs.remove(&c);
+        }
+        self.guest_fs.set_visible(!filesystems.is_empty());
+        self.guest_fs_heading.set_visible(!filesystems.is_empty());
+        for (i, f) in filesystems.iter().enumerate() {
+            if i > 0 {
+                self.guest_fs.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            }
+            let m = Meter::new(&f.mountpoint);
+            m.root.set_margin_start(16);
+            m.root.set_margin_end(16);
+            m.root.set_margin_top(12);
+            m.root.set_margin_bottom(12);
+            match (f.used, f.total) {
+                (Some(u), Some(t)) if t > 0 => m.set(u as f64 / t as f64, &format::used_of(u, t)),
+                _ => m.set(0.0, "—"),
+            }
+            // Read-only media (live CDs) are always "full"; don't warn.
+            m.set_warning_allowed(!matches!(f.fstype.as_str(), "iso9660" | "erofs" | "squashfs" | "udf"));
+            m.set_caption(Some(&f.fstype).filter(|t| !t.is_empty()).map(String::as_str));
+            self.guest_fs.append(&m.root);
+        }
     }
 
     fn show_storage(&self, d: &DomainSummary, live: Option<&VmLive>) {
