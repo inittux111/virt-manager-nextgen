@@ -19,7 +19,7 @@ toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo clippy --wor
 toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo fmt --all
 ./target/debug/virt-manager-nextgen                                   # run on the host
 ./build-rpm.sh [minor|major|X.Y.Z|--rebuild]                         # the RPM, run on the host: bumps the version (packaging/new-version.sh: commit + tag vX.Y.Z), builds in the toolbox (creates it if missing) from HEAD → target/rpmbuild/RPMS/x86_64/
-./build-deb.sh [release]                                              # Debian .deb in a podman container (debian:testing by default; trixie is too old), current version, → target/debian/ (packaging/debian/)
+./build-deb.sh [release]                                              # Debian .deb in a podman container (debian:trixie by default, Rust via rustup; on libadwaita < 1.8 builds with --no-default-features), current version, → target/debian/ (packaging/debian/)
 ./maintenance.sh                                                      # maintenance check on the host: toolbox dnf upgrade, cargo update, cargo audit (installed in /opt/cargo/bin), build, clippy -D warnings, tests, session selftest; commits Cargo.lock if all pass
 sudo dnf install ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-*.rpm   # install it on the host (the user runs this)
 toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
@@ -61,6 +61,8 @@ Cargo workspace (edition 2024):
   - `style.css` is loaded at APPLICATION priority and uses only libadwaita CSS variables. Graph colours: `sparkline.cpu|memory|disk|network`.
 
 Long-running operations (clone) show progress in the window's job bar; libvirt work reports progress through atomics polled by a GLib timeout.
+
+Toolkit versions: the workspace targets GTK 4.18 / libadwaita 1.7 (Debian 13); the app's default `gnome49` feature adds GTK 4.20 / libadwaita 1.8 (only the native Keyboard Shortcuts dialog). Code needing newer APIs must be behind `#[cfg(feature = "gnome49")]` with a fallback; style.css must avoid `@media` (GTK 4.20+), dark-only rules go in style-dark.css. Check both with `cargo clippy` and `--no-default-features`.
 
 Dependencies so far: `gtk4`, `libadwaita`, `virt` (all required to use the platform). Everything else is in-house. System libraries linked: libvirt, libosinfo, spice-client-glib, gvnc, vte-2.91-gtk4 (dev packages `spice-glib-devel gvnc-devel vte291-gtk4-devel` are in the toolbox; the RPM must `Requires` the runtime packages).
 

@@ -51,6 +51,9 @@ inbox cargo audit || failed="$failed security-check"
 step "4/5 Building, linting and testing"
 inbox cargo build --workspace --all-targets || failed="$failed build"
 inbox cargo clippy --workspace --all-targets -- -D warnings || failed="$failed lint"
+# The Debian 13 build (GTK 4.18, libadwaita 1.7) leaves out `gnome49`.
+inbox cargo clippy -p virt-manager-nextgen --all-targets --no-default-features -- -D warnings \
+    || failed="$failed lint-debian13"
 inbox cargo test --workspace || failed="$failed tests"
 
 step "5/5 End-to-end check (throwaway VM on the user session)"

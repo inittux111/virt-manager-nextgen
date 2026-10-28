@@ -55,13 +55,26 @@ pub fn run() -> glib::ExitCode {
 }
 
 fn load_css() {
+    let Some(display) = gdk::Display::default() else { return };
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("style.css"));
-    if let Some(display) = gdk::Display::default() {
-        // APPLICATION priority is below USER priority, so the person's own
-        // ~/.config/gtk-4.0/gtk.css theme always wins.
-        gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
-    }
+    // APPLICATION priority is below USER priority, so the person's own
+    // ~/.config/gtk-4.0/gtk.css theme always wins.
+    gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    // The dark-mode additions, present only while the app is dark.
+    let dark = gtk::CssProvider::new();
+    dark.load_from_string(include_str!("style-dark.css"));
+    let apply = move |manager: &adw::StyleManager| {
+        if manager.is_dark() {
+            gtk::style_context_add_provider_for_display(&display, &dark, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        } else {
+            gtk::style_context_remove_provider_for_display(&display, &dark);
+        }
+    };
+    let manager = adw::StyleManager::default();
+    apply(&manager);
+    manager.connect_dark_notify(apply);
 }
 
 fn load_icons() {
