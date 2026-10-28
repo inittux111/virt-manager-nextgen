@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `PLAN.md` is the source of truth for goals, scope and the required feature list. Read it before starting any feature work.
 
-Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard ✔, 5 hardware details / Add Hardware / XML editing ✔, 6 console (SPICE/VNC/serial) ✔, 7 host overview, networks, storage, Preferences ✔, 8 graphs, guest agent, tray ✔, 9 app icon + polish ✔, RPM ✔. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
+Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, view tabs) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard ✔, 5 hardware details / Add Hardware / XML editing ✔, 6 console (SPICE/VNC/serial) ✔, 7 host overview, networks, storage, Preferences ✔, 8 graphs, guest agent, tray ✔, 9 app icon + polish ✔, RPM ✔. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
 
 ## Commands
 
@@ -53,10 +53,10 @@ Cargo workspace (edition 2024):
   - New VM wizard: `ui/new_vm.rs` (four steps, OS defaults from osinfo, the dialog owns the wizard until closed) and `ui/os_chooser.rs`. The XML it produces comes from `vmng_virt::build_domain_xml` (disk boots first, installer second, so the installer is skipped once the OS is installed).
   - Hardware tab: `ui/hardware/` (`mod.rs` list + editor + Apply/Revert bar, right-click/Delete → Remove; popovers are parented outside `GtkListBox`, whose `remove_all` loops on non-row children over a working copy of the full domain XML; `editors.rs` per-device editors bound through `Bind`; `add.rs` Add Hardware; `labels.rs` names/icons). Saving redefines the whole persistent XML (`save_domain_config` refuses UUID/name changes); CD and link-state changes go live via `update_device`; add/remove use attach/detach with LIVE+CONFIG falling back to CONFIG.
   - Console: `ui/console.rs` (`ConsoleWindow`: one window per VM, several can be open; the main window keeps them by UUID and updates them each poll; each has its own `vm.*` action group aimed at its VM; screen or text console, floating toolbar, fullscreen, scaling, resize-guest, screenshots). Serial output: reader thread → shared buffer drained by a 16 ms GLib timeout; input: writer thread.
-  - Other views (title menu): `ui/host_view.rs`, `ui/networks_view.rs` (list + settings + Apply bar, New Network dialog), `ui/storage_view.rs` (pools, volumes, New Pool/New Volume). They load when shown (`MainWindow::load_view`); the header's main button follows the view (New VM / New Network). `ui/preferences.rs`: `adw::PreferencesDialog`, every change saved at once through `Settings::update`.
+  - Other views (header tabs): `ui/host_view.rs`, `ui/networks_view.rs` (list + settings + Apply bar, New Network dialog), `ui/storage_view.rs` (pools, volumes, New Pool/New Volume). They load when shown (`MainWindow::load_view`); the header's main button follows the view (New VM / New Network). `ui/preferences.rs`: `adw::PreferencesDialog`, every change saved at once through `Settings::update`.
   - `ui/performance.rs` (VM page Performance tab, `widgets/chart.rs`), guest agent details via `virDomainGetGuestInfo` (`vmng-virt/src/guest.rs`).
   - `tray.rs`: tray icon speaking StatusNotifierItem + com.canonical.dbusmenu directly over GIO D-Bus (no AppIndicator library; GNOME needs the AppIndicator extension, detected via `org.kde.StatusNotifierWatcher`). With the tray on, closing the window hides it.
-  - Machines view: `ui/vm_list.rs`, `ui/vm_details.rs`, `ui/title_menu.rs`. VM page: `ui/vm_page.rs` (tabs), `ui/snapshots.rs`. `ui/vm_dialogs.rs`: clone, rename, delete.
+  - Machines view: `ui/vm_list.rs`, `ui/vm_details.rs`. `ui/views.rs`: the views (Machines, Host, Networks, Storage) shown as `adw::ViewSwitcher` header tabs (a `ViewSwitcherBar` at the bottom when narrow); the connection (System / User session) is a radio section in the main menu (`win.connection`), its name shown above the VM list. VM page: `ui/vm_page.rs` (tabs), `ui/snapshots.rs`. `ui/vm_dialogs.rs`: clone, rename, delete.
   - `style.css` is loaded at APPLICATION priority and uses only libadwaita CSS variables. Graph colours: `sparkline.cpu|memory|disk|network`.
 
 Long-running operations (clone) show progress in the window's job bar; libvirt work reports progress through atomics polled by a GLib timeout.
@@ -79,7 +79,7 @@ A modern rewrite of virt-manager: a desktop front-end for QEMU/KVM through libvi
 
 ## UI design
 
-The approved UI mockup is the design reference: https://claude.ai/artifact/R9CVZEsdNRp2Fx4fCuPz3w (read it with the Artifact tool, not a web fetch). It covers the main window (VM list + details panel + host summary, title-menu view/connection switcher), console, VM hardware and snapshots pages, Add Hardware, Preferences, New VM wizard, host overview, network and storage lists and settings, and empty/error/progress/confirmation states. Layout and behavior decisions are also recorded in `PLAN.md`.
+The approved UI mockup is the design reference: https://claude.ai/artifact/R9CVZEsdNRp2Fx4fCuPz3w (read it with the Artifact tool, not a web fetch). It covers the main window (VM list + details panel + host summary; the mockup's title-menu view/connection switcher became header tabs + a Connection section in the main menu, to follow GNOME's guidelines), console, VM hardware and snapshots pages, Add Hardware, Preferences, New VM wizard, host overview, network and storage lists and settings, and empty/error/progress/confirmation states. Layout and behavior decisions are also recorded in `PLAN.md`.
 
 **Consistency:** every screen follows the same patterns: the same layout, spacing, button placement (primary action in the same spot), wording, icons, dialogs and confirmation style. A new screen reuses existing building blocks (shared widgets/components in code) rather than inventing its own look.
 

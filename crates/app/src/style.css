@@ -83,11 +83,6 @@ chart.network { color: var(--purple-4); }
 
 /* ── Title menu ──────────────────────────────────────────────────────── */
 
-.title-menu-button { padding: 2px 10px; }
-.title-menu-button .title { font-weight: 700; }
-.title-menu .menu-heading { margin: 8px 10px 4px 10px; }
-.title-menu row { padding: 6px 8px; border-radius: 8px; min-height: 32px; }
-.title-menu .check { color: var(--accent-color); }
 
 /* ── Pages and long operations ───────────────────────────────────────── */
 

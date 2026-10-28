@@ -34,7 +34,7 @@ Add Hardware (device types)
 - Character devices: Serial, Console, Channel
 
 VM management
-- No permanent sidebar: clicking the window title ("Virtual Machines") opens a menu to switch between Virtual Machines, Host overview, Virtual networks and Storage pools, and between connections (system / user session), so the VM list gets the full window
+- No permanent sidebar: GNOME-style header tabs switch between Machines, Host, Networks and Storage (a bar at the bottom in narrow windows); the main menu switches between connections (system / user session), so the VM list gets the full window
 - The VM list shows a modern-looking logo for each VM, matching its guest OS (for example Fedora, Ubuntu, Windows), with a clean generic icon when the OS is unknown
 - Run, pause, shut down, reboot, force off, save, delete, and optionally delete the VM's storage
 - Clone VMs
@@ -86,6 +86,7 @@ Done after the first round
 - Polish: animations, keyboard shortcuts with a Keyboard Shortcuts dialog, every screen working down to phone width
 - Live screen preview in the VM details; each console in its own window (several at once)
 - The window remembers its size, maximized state, view and selected VM
+- Stricter GNOME look: a plain "+" button, standard header tabs (main window and VM page), connection choice in the main menu
 
 Decided against (desktop use only)
 - USB host devices / USB redirection, PCI passthrough, remote hosts over SSH, migration

@@ -12,7 +12,7 @@ pub mod preferences;
 pub mod shortcuts;
 mod snapshots;
 mod storage_view;
-mod title_menu;
+mod views;
 mod vm_actions;
 mod vm_details;
 mod vm_dialogs;
