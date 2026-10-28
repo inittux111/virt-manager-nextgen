@@ -1013,6 +1013,18 @@ impl MainWindow {
         }
     }
 
+    /// Shows the window in front. GNOME (Wayland) only lets a window raise
+    /// itself in response to input inside the app, and a tray menu click
+    /// isn't that; a window that appears anew is put in front, though. So a
+    /// window that is open but behind others (or minimised) is hidden and
+    /// shown again.
+    fn bring_to_front(&self) {
+        if self.window.is_visible() && !self.window.is_active() {
+            self.window.set_visible(false);
+        }
+        self.window.present();
+    }
+
     fn update_tray_menu(&self) {
         let tray = self.tray.borrow();
         let Some(tray) = tray.as_ref() else { return };
@@ -1029,7 +1041,7 @@ impl MainWindow {
     fn tray_command(self: &Rc<Self>, cmd: crate::tray::TrayCommand) {
         use crate::tray::TrayCommand;
         match cmd {
-            TrayCommand::ShowWindow => self.window.present(),
+            TrayCommand::ShowWindow => self.bring_to_front(),
             TrayCommand::Quit => {
                 if let Some(app) = self.window.application() {
                     app.quit();
@@ -1037,7 +1049,7 @@ impl MainWindow {
             }
             TrayCommand::Power(uuid, action) => self.request_power(uuid, action),
             TrayCommand::Console(uuid) => {
-                self.window.present();
+                self.bring_to_front();
                 if let Some(vm) = self.vm_by_uuid(&uuid) {
                     self.vm_list.select(&uuid);
                     self.open_console(&vm);
