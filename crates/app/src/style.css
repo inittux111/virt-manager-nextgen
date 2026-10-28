@@ -1,0 +1,84 @@
+/*
+ * Application stylesheet.
+ *
+ * Loaded at APPLICATION priority, which is below USER priority, so a custom
+ * theme in ~/.config/gtk-4.0/gtk.css always wins. Only libadwaita's named
+ * colours and variables are used: never hard-coded colours.
+ */
+
+/* ── Status dots ─────────────────────────────────────────────────────── */
+
+.status-dot {
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 999px;
+  background-color: alpha(currentColor, 0.45);
+}
+.status-dot.running { background-color: var(--success-bg-color); }
+.status-dot.paused  { background-color: var(--warning-bg-color); }
+.status-dot.error   { background-color: var(--error-bg-color); }
+
+/* ── OS logos ────────────────────────────────────────────────────────── */
+
+os-logo.generic {
+  border-radius: 24%;
+  background-color: alpha(currentColor, 0.08);
+  color: alpha(currentColor, 0.75);
+}
+
+/* ── Graphs: fixed metric colours (CPU = accent, memory = green,
+ *    disk = orange, network = purple) ───────────────────────────────── */
+
+sparkline.cpu     { color: var(--accent-color); }
+sparkline.memory  { color: var(--success-color); }
+sparkline.disk    { color: var(--orange-5); }
+sparkline.network { color: var(--purple-4); }
+sparkline.inactive { color: alpha(currentColor, 0.25); }
+
+@media (prefers-color-scheme: dark) {
+  sparkline.disk    { color: var(--orange-2); }
+  sparkline.network { color: var(--purple-2); }
+}
+
+/* ── Meters ──────────────────────────────────────────────────────────── */
+
+.meter levelbar trough { min-height: 6px; }
+.meter levelbar block.filled { background-color: var(--accent-bg-color); }
+.meter.warning:not(.no-warning) levelbar block.filled { background-color: var(--warning-bg-color); }
+.meter .meter-value { font-weight: 600; }
+
+/* ── VM list ─────────────────────────────────────────────────────────── */
+
+.vm-list { background: none; }
+.vm-list > row { padding: 8px 10px; margin: 1px 0; border-radius: 10px; }
+.vm-list .vm-name { font-weight: 600; }
+.vm-list .row-actions button { min-width: 28px; min-height: 28px; padding: 0; }
+.vm-list-summary { margin: 4px 12px 6px 12px; }
+
+.host-summary { padding: 14px 16px; }
+.host-summary .heading { font-size: 0.95em; }
+
+/* ── VM details ──────────────────────────────────────────────────────── */
+
+.details-panel { padding: 24px 28px 32px 28px; }
+.details-header .title-2 { margin-bottom: 2px; }
+
+.console-preview {
+  min-height: 220px;
+  border-radius: 12px;
+  background-color: alpha(currentColor, 0.05);
+}
+
+.stat-card { padding: 12px 14px; }
+.stat-card .stat-value { font-weight: 700; font-size: 1.15em; }
+
+.section-heading { margin-top: 6px; }
+.fact-value { font-feature-settings: "tnum"; }
+
+/* ── Title menu ──────────────────────────────────────────────────────── */
+
+.title-menu-button { padding: 2px 10px; }
+.title-menu-button .title { font-weight: 700; }
+.title-menu .menu-heading { margin: 8px 10px 4px 10px; }
+.title-menu row { padding: 6px 8px; border-radius: 8px; min-height: 32px; }
+.title-menu .check { color: var(--accent-color); }

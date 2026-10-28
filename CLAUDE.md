@@ -4,7 +4,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-The repository is pre-implementation. Only `PLAN.md` exists, and it is the source of truth for goals, scope and the required feature list. Read it before starting any feature work. Once the Rust project is scaffolded, update this file with the real build, lint and test commands and a short architecture overview.
+`PLAN.md` is the source of truth for goals, scope and the required feature list. Read it before starting any feature work.
+
+Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots, 4 New VM wizard, 5 hardware details / Add Hardware / XML editing, 6 console (SPICE/VNC/serial), 7 host overview, networks, storage, Preferences, 8 graphs, guest agent, tray, 9 app icon + polish, then the RPM. Power actions (start, pause, shut down, reboot, reset, force off, save) and autostart already work; screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
+
+## Commands
+
+All commands run inside the toolbox. The built binary runs on the host (its runtime libraries are installed there).
+
+```sh
+toolbox run -c virt-manager-nextgen cargo build                       # debug build
+toolbox run -c virt-manager-nextgen cargo test --workspace            # unit tests (osinfo tests need osinfo-db, present in the toolbox)
+toolbox run -c virt-manager-nextgen cargo clippy --workspace --all-targets
+toolbox run -c virt-manager-nextgen cargo fmt --all
+./target/debug/virt-manager-nextgen                                   # run on the host
+toolbox run -c virt-manager-nextgen cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
+```
+
+UI review without touching the real desktop: start a headless compositor on the host (`mutter --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display=vmng-test &`), then run the debug binary with `WAYLAND_DISPLAY=vmng-test VMNG_SCREENSHOT=/path/out.png` (optional `VMNG_SCREENSHOT_DELAY=<secs>`); it renders the window to a PNG and quits (debug builds only, `crates/app/src/dev.rs`). Theme variants: `ADW_DEBUG_COLOR_SCHEME=prefer-dark|prefer-light`, `ADW_DEBUG_HIGH_CONTRAST=1`; for plain Adwaita (without Abyss) point `XDG_CONFIG_HOME` at a directory without `gtk-4.0/gtk.css`. Only one instance per app id runs per session, so take screenshots one at a time. For a running-VM test, use a transient domain on `qemu:///session` (`virsh create`) and destroy it afterwards; never start or change the user's own VMs.
+
+## Architecture
+
+Cargo workspace (edition 2024):
+
+- `crates/xml` (`vmng-xml`): in-house XML element tree for libvirt XML. Preserves unknown content so edits never drop data; rejects DTDs, limits depth and size. No dependencies.
+- `crates/virt` (`vmng-virt`): the only code that talks to libvirt (`virt` crate, plus `virt::sys` for bulk stats). Blocking API returning plain, `Send` Rust types: `Connection`, `DomainSummary`/`DomainConfig` (typed read-only view of domain XML), `DomainStats`, `HostStats`, `PoolSummary`, `GuestDetails`, `PowerAction`.
+- `crates/osinfo` (`vmng-osinfo`): hand-written FFI to libosinfo (OS lookup, install-media detection). `OsDb` is `Send` but not `Sync`.
+- `crates/app` (binary `virt-manager-nextgen`): GTK4 + libadwaita UI.
+  - `backend/`: `Conn` runs libvirt calls on GLib's thread pool (`gio::spawn_blocking`) and is awaited from `glib::spawn_future_local`; `Monitor` turns polled counter samples into rates and 60-sample histories.
+  - `osdb.rs`: loads osinfo-db once on its own thread; display names and logo keys for osinfo ids.
+  - `settings.rs`: preferences in `~/.config/virt-manager-nextgen/settings.ini` (GLib `KeyFile`, no GSettings schema).
+  - `ui/widgets/`: shared building blocks (OS logo tile, sparkline, status dot + label, usage meter, card/list helpers). New screens must reuse these.
+  - `ui/window.rs` owns connection state and the poll timer; `ui/vm_list.rs`, `ui/vm_details.rs`, `ui/title_menu.rs` are the Machines view.
+  - `style.css` is loaded at APPLICATION priority and uses only libadwaita CSS variables. Graph colours: `sparkline.cpu|memory|disk|network`.
+
+Dependencies so far: `gtk4`, `libadwaita`, `virt` (all required to use the platform). Everything else is in-house.
 
 ## What is being built
 
