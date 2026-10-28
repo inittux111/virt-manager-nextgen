@@ -1,0 +1,22 @@
+[package]
+name = "virt-manager-nextgen"
+description = "A modern desktop manager for QEMU/KVM virtual machines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "virt-manager-nextgen"
+path = "src/main.rs"
+
+[dependencies]
+vmng-xml.workspace = true
+vmng-virt.workspace = true
+vmng-osinfo.workspace = true
+gtk.workspace = true
+adw.workspace = true
+
+[lints]
+workspace = true
