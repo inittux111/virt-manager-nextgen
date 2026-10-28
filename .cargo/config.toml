@@ -1,0 +1,5 @@
+# The app is always built with Fedora's current Rust (in the toolbox), so
+# `cargo update` may pick crate releases that need a newer compiler than
+# the minimum in Cargo.toml: holding them back would hold back fixes.
+[resolver]
+incompatible-rust-versions = "allow"
