@@ -17,7 +17,10 @@ const NAME: &str = "vmng-selftest";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     vmng_virt::init();
-    let raw = Connect::open(Some("qemu:///session"))?;
+    // VMNG_TEST_URI picks another libvirt (the test pipeline's Debian
+    // container); by default the user session.
+    let uri = std::env::var("VMNG_TEST_URI").unwrap_or_else(|_| "qemu:///session".into());
+    let raw = Connect::open(Some(&uri))?;
     let dir = std::env::args().nth(1).ok_or("usage: selftest <empty-directory>")?;
     let pool = StoragePool::create_xml(
         &raw,
@@ -43,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     )?;
     let uuid = dom.get_uuid_string()?;
-    let conn = Connection::open(ConnectionKind::Session)?;
+    let conn = Connection::open(ConnectionKind::from_uri(&uri))?;
 
     let run = || -> Result<(), Box<dyn std::error::Error>> {
         conn.create_snapshot(&uuid, "first", "made by selftest")?;

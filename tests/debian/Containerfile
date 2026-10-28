@@ -1,0 +1,10 @@
+# Debian 13 test environment (see tests/debian.sh): the Debian build image
+# plus Debian's own libvirt, QEMU, UEFI firmware and software TPM, so the
+# app is tested against Debian's versions of everything.
+ARG BUILD_IMAGE=localhost/virt-manager-nextgen-debian:trixie
+FROM ${BUILD_IMAGE}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libvirt-daemon-system libvirt-clients qemu-system-x86 ovmf swtpm swtpm-tools \
+        osinfo-db xorriso dnsmasq-base iproute2 nftables \
+    && rm -rf /var/lib/apt/lists/*

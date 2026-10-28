@@ -125,6 +125,69 @@ stops without changing anything when the folder has uncommitted changes,
 or when the folder and GitHub both have changes the other doesn't (they
 then need merging by hand).
 
+## Testing: `./test-pipeline.sh`
+
+One command checks that every feature still works, on both systems:
+
+```sh
+./test-pipeline.sh            # Fedora 44 and Debian 13
+./test-pipeline.sh fedora     # Fedora 44 only
+./test-pipeline.sh debian     # Debian 13 only
+```
+
+For each system it runs:
+
+1. **Code checks**: formatting, the lint check (both the full build and the
+   Debian 13 variant) and all unit tests.
+2. **Real libvirt checks with throwaway VMs**:
+   - create, start and delete a VM
+   - snapshots, clone, rename and delete
+   - adding, editing and removing hardware
+   - BIOS, UEFI and each UEFI firmware file
+   - TPM 2.0
+   - virtual networks and storage pools
+3. **Screens**: a screenshot of every main screen (machines, hardware,
+   firmware, Add Hardware, snapshots, performance, the console and text
+   console, host, networks, storage, every New VM step, Preferences,
+   Keyboard Shortcuts, narrow window, dark and high contrast), with a
+   running test VM. Each must render without errors.
+
+Where it runs:
+
+- **Fedora 44** on this computer: code checks in the toolbox, VMs on your
+  user session, and the network/pool check on the System connection.
+- **Debian 13** entirely inside a Debian 13 container with Debian's own
+  libvirt, QEMU, UEFI firmware and TPM software (using this computer's KVM).
+  Your own libvirt and VMs are not touched.
+
+Everything the tests create is named `vmng-test-…` and removed again. The
+summary at the end lists what passed and failed; logs and screenshots are in
+`target/test-report/fedora44/` and `target/test-report/debian13/`. The
+screens use a headless test display (started automatically), so nothing
+appears on your desktop. A full run takes about 10 minutes; the first
+Debian run takes longer while it downloads Debian's packages.
+
+What it can't check: the tray icon (the test display has no tray) and how
+things feel on a real Debian desktop.
+
+### On GitHub
+
+A light version runs automatically on GitHub on every push and pull request
+(`.github/workflows/ci.yml`): formatting, the lint check, unit tests and a
+full build, for Fedora 44 and Debian 13 (about 5 minutes). The repository
+page shows a green or red mark for the latest code, and GitHub emails you
+when it fails. The VM and screen tests need this computer's KVM, so they
+only run with `./test-pipeline.sh`.
+
+Dependabot (`.github/dependabot.yml`) watches the Rust crates, which both
+builds share: it sends security alerts, opens pull requests that fix
+vulnerable crates, and once a week a pull request with all compatible crate
+updates; each is built and tested on both systems before it is merged. It
+also keeps the workflow's GitHub Actions current. The system libraries
+(GTK, libvirt, …) come from Fedora and Debian and are updated with the
+normal system updates; the GitHub check always uses the newest Fedora 44
+and Debian 13 images, so an update that breaks the build shows up there.
+
 ## Running VMs
 
 The app talks to libvirt. To run machines on the same computer, the libvirt

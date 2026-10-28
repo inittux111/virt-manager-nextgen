@@ -13,7 +13,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let iso = args.next().ok_or("usage: tpm_check <installer.iso> [seconds]")?;
     let wait: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
-    let conn = Connection::open(ConnectionKind::from_uri("qemu:///session"))?;
+    // VMNG_TEST_URI picks another libvirt (the test pipeline's Debian
+    // container); by default the user session.
+    let uri = std::env::var("VMNG_TEST_URI").unwrap_or_else(|_| "qemu:///session".into());
+    let conn = Connection::open(ConnectionKind::from_uri(&uri))?;
     let vm = NewVm {
         name: "vmng-test-tpm".into(),
         os_id: Some("http://microsoft.com/win/11".into()),
