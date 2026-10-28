@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gtk::gdk;
 use gtk::prelude::*;
 use vmng_virt::{DiskConfig, DomainState, DomainSummary, Firmware, GuestDetails};
 
@@ -67,6 +68,8 @@ pub struct VmDetails {
     status: StatusLabel,
     buttons: VmButtons,
     preview: gtk::Stack,
+    preview_frame: gtk::Box,
+    screen: gtk::Picture,
     preview_caption: gtk::Label,
     cpu: StatCard,
     memory: StatCard,
@@ -145,11 +148,30 @@ impl VmDetails {
         preview.add_named(&placeholder("system-shutdown-symbolic", "This machine is shut off"), Some("off"));
         preview.add_named(&placeholder("media-playback-pause-symbolic", "Paused"), Some("paused"));
         preview.add_named(&placeholder("video-display-symbolic", "Running"), Some("running"));
+        // A live picture of the screen. It sits in an overlay so it fills
+        // the preview box without deciding its size (a picture's size
+        // follows its image, which would reflow the whole panel).
+        let screen = gtk::Picture::builder().content_fit(gtk::ContentFit::Contain).can_shrink(true).build();
+        screen.update_property(&[gtk::accessible::Property::Label("Screen preview")]);
+        let screen_box = gtk::Overlay::builder().child(&gtk::Box::new(gtk::Orientation::Vertical, 0)).build();
+        screen_box.add_overlay(&screen);
+        preview.add_named(&screen_box, Some("screen"));
         let preview_caption = gtk::Label::builder().xalign(0.0).css_classes(["caption", "dim-label"]).build();
         let preview_box = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).hexpand(true).build();
-        let frame = gtk::Box::builder().css_classes(["console-preview"]).vexpand(true).build();
+        let frame = gtk::Box::builder().css_classes(["console-preview"]).build();
         preview.set_hexpand(true);
         frame.append(&preview);
+        // Clicking a running machine's preview opens its console.
+        let click = gtk::GestureClick::new();
+        let p = preview.clone();
+        click.connect_released(move |g, _, _, _| {
+            if matches!(p.visible_child_name().as_deref(), Some("screen" | "running"))
+                && let Some(w) = g.widget()
+            {
+                let _ = w.activate_action("vm.console", None);
+            }
+        });
+        frame.add_controller(click);
         preview_box.append(&frame);
         preview_box.append(&preview_caption);
 
@@ -255,6 +277,8 @@ impl VmDetails {
             status,
             buttons,
             preview,
+            preview_frame: frame,
+            screen,
             preview_caption,
             cpu,
             memory,
@@ -304,6 +328,18 @@ impl VmDetails {
         self.on_autostart.replace(Some(Rc::new(f)));
     }
 
+    /// Shows a new picture of `uuid`'s screen (ignored if another VM is
+    /// shown by now).
+    pub fn set_screen(&self, uuid: &str, texture: &gdk::Texture) {
+        if self.uuid.borrow().as_deref() != Some(uuid) {
+            return;
+        }
+        self.screen.set_paintable(Some(texture));
+        if self.preview.visible_child_name().as_deref() == Some("running") {
+            self.preview.set_visible_child_name("screen");
+        }
+    }
+
     /// Shows a VM. `live` and `guest` may be missing while data loads.
     pub fn show(&self, d: &DomainSummary, live: Option<&VmLive>, guest: Option<&GuestDetails>) {
         let changed_vm = self.uuid.borrow().as_deref() != Some(d.uuid.as_str());
@@ -317,11 +353,20 @@ impl VmDetails {
         let off = matches!(s, DomainState::ShutOff | DomainState::Crashed);
         self.buttons.update(s);
 
-        self.preview.set_visible_child_name(match s {
+        if changed_vm {
+            self.screen.set_paintable(None::<&gdk::Paintable>);
+        }
+        let has_screen = self.screen.paintable().is_some();
+        let child = match s {
             _ if off => "off",
             DomainState::Paused | DomainState::Suspended => "paused",
+            _ if has_screen => "screen",
             _ => "running",
-        });
+        };
+        self.preview.set_visible_child_name(child);
+        let clickable = matches!(child, "screen" | "running");
+        self.preview_frame.set_cursor_from_name(clickable.then_some("pointer"));
+        self.preview_frame.set_tooltip_text(clickable.then_some("Open Console"));
         let graphics = d.config.graphics.first();
         self.preview_caption.set_label(&match graphics {
             Some(g) => match (g.port, s.is_active()) {

@@ -12,6 +12,9 @@ pub fn maybe_screenshot(window: &impl IsA<gtk::Widget>) {
     let delay = std::env::var("VMNG_SCREENSHOT_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(6);
     let widget = window.clone().upcast::<gtk::Widget>();
     glib::timeout_add_local_once(Duration::from_secs(delay), move || {
+        if let Ok(class) = std::env::var("VMNG_DEV_TREE") {
+            dump_tree(&widget, &class, 0, false);
+        }
         if std::env::var_os("VMNG_DEV_OVERFLOW").is_some() {
             report_overflow(&widget, 0);
         }
@@ -55,5 +58,41 @@ fn report_overflow(widget: &gtk::Widget, depth: usize) {
             widget.css_classes(),
             widget.width()
         );
+    }
+}
+
+/// Prints the widgets inside the first one with CSS class `class`, with
+/// their sizes (to debug layouts).
+fn dump_tree(widget: &gtk::Widget, class: &str, depth: usize, inside: bool) {
+    if !inside && widget.has_css_class(class) {
+        let mut a = widget.parent();
+        while let Some(w) = a {
+            let b = w.compute_bounds(&w.root().map_or_else(|| w.clone(), |r| r.upcast()));
+            eprintln!(
+                "ANCESTOR {} {:?} {:?}",
+                w.type_().name(),
+                w.css_classes(),
+                b.map(|b| (b.x() as i32, b.y() as i32, b.width() as i32, b.height() as i32))
+            );
+            a = w.parent();
+        }
+    }
+    let inside = inside || widget.has_css_class(class);
+    if inside && depth < 40 {
+        let b = widget.compute_bounds(&widget.root().map_or_else(|| widget.clone(), |r| r.upcast()));
+        eprintln!(
+            "TREE {:indent$}{} {:?} vis={} {:?}",
+            "",
+            widget.type_().name(),
+            widget.css_classes(),
+            widget.is_child_visible() && widget.is_visible(),
+            b.map(|b| (b.x() as i32, b.y() as i32, b.width() as i32, b.height() as i32)),
+            indent = depth.min(30)
+        );
+    }
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        dump_tree(&c, class, depth + 1, inside);
+        child = c.next_sibling();
     }
 }
