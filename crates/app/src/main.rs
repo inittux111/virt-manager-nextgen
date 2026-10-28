@@ -8,6 +8,7 @@ mod dev;
 mod format;
 mod osdb;
 mod settings;
+mod tray;
 mod ui;
 
 fn main() -> gtk::glib::ExitCode {
