@@ -152,6 +152,7 @@ For each system it runs:
    - create, start and delete a VM
    - snapshots, clone, rename and delete
    - adding, editing and removing hardware
+   - inserting a disc image into a running VM's CD-ROM drive
    - BIOS, UEFI and each UEFI firmware file
    - TPM 2.0
    - virtual networks and storage pools

@@ -68,6 +68,11 @@ check screen-boot-firmware screen boot-firmware "$vm" VMNG_DEV_ACTION=vm.hardwar
 check screen-add-hardware screen add-hardware "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ADD=1
 check screen-snapshots screen snapshots "$vm" VMNG_DEV_ACTION=vm.snapshots
 check screen-performance screen performance "$vm" VMNG_DEV_ACTION=vm.performance VMNG_SCREENSHOT_DELAY=14
+# Browsing to a new disc image for the running VM's CD-ROM drive.
+cp "$ISO" "$OUT/other-disc.iso"
+check screen-insert-disc screen insert-disc "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=2 \
+    VMNG_DEV_CDROM_FILE="$OUT/other-disc.iso"
+check disc-inserted-in-running-vm sh -c "virsh -c '$VM_URI' domblklist vmng-test-ui | grep -q other-disc.iso"
 check screen-console screen console "$vm" VMNG_DEV_ACTION=vm.console VMNG_SCREENSHOT_DELAY=12
 check screen-text-console screen text-console "$vm" VMNG_DEV_ACTION=vm.console VMNG_DEV_CONSOLE_TEXT=1 VMNG_SCREENSHOT_DELAY=12
 check screen-host screen host VMNG_DEV_VIEW=host

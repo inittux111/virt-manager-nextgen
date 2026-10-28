@@ -176,7 +176,15 @@ impl Connection {
     }
 
     fn affect(&self, dom: &Domain) -> u32 {
-        if dom.is_active().unwrap_or(false) { AFFECT_LIVE | AFFECT_CONFIG } else { AFFECT_CONFIG }
+        let active = dom.is_active().unwrap_or(false);
+        // A transient machine (started without being defined) has no saved
+        // configuration to change; asking for one fails the whole change.
+        let persistent = dom.is_persistent().unwrap_or(true);
+        match (active, persistent) {
+            (true, true) => AFFECT_LIVE | AFFECT_CONFIG,
+            (true, false) => AFFECT_LIVE,
+            (false, _) => AFFECT_CONFIG,
+        }
     }
 
     /// Adds a device. On a running machine it is hot-plugged when possible;

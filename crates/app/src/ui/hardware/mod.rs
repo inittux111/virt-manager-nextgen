@@ -524,7 +524,7 @@ impl HardwareView {
         let weak = Rc::downgrade(self);
         Rc::new(move |device: Element, message: String| {
             if let Some(this) = weak.upgrade() {
-                this.update_live(index, device, message, false);
+                this.update_live(index, device, message);
             }
         })
     }
@@ -635,9 +635,9 @@ impl HardwareView {
         });
     }
 
-    /// Applies an immediate change (CD, network cable) to one device;
-    /// `reshow` redraws its editor afterwards (for changes made elsewhere).
-    fn update_live(self: &Rc<Self>, index: usize, device: Element, message: String, reshow: bool) {
+    /// Applies an immediate change (CD, network cable) to one device, then
+    /// redraws the editor so every label shows the new state.
+    fn update_live(self: &Rc<Self>, index: usize, device: Element, message: String) {
         let Some((conn, uuid)) = self.conn_uuid() else { return };
         let weak = Rc::downgrade(self);
         let dev = device.clone();
@@ -653,14 +653,21 @@ impl HardwareView {
                     }
                     this.update_labels();
                     this.update_apply_bar();
-                    if reshow {
-                        this.show_editor();
-                    }
+                    this.show_editor();
                     this.feedback.toast(&if now { message } else { format!("{message} (after a restart)") });
                     (this.on_changed)();
                 }
                 Err(e) => {
-                    this.feedback.error("Couldn't change the device", e.message());
+                    let mut details = e.message().to_owned();
+                    // QEMU runs as its own user on the System connection and
+                    // may not be allowed into the file's folder.
+                    if details.contains("Permission denied") {
+                        details.push_str(
+                            "\n\nThe virtual machine can't read this file from where it is. Move it to a folder \
+                             it can reach, such as Downloads or a storage pool, and choose it again.",
+                        );
+                    }
+                    this.feedback.error("Couldn't change the device", &details);
                     this.show_editor();
                 }
             }
@@ -678,7 +685,7 @@ impl HardwareView {
         let Some(d) = self.selected_device() else { return };
         let mut dev = d.element;
         dev.remove_children(|c| c.name == "source");
-        self.update_live(d.index, dev, "Ejected the disc".into(), true);
+        self.update_live(d.index, dev, "Ejected the disc".into());
     }
 
     /// Plugs in or pulls the virtual cable of the selected network card.
@@ -687,7 +694,7 @@ impl HardwareView {
         let mut dev = d.element;
         dev.child_or_insert("link").set_attr("state", if connected { "up" } else { "down" });
         let msg = if connected { "Connected the cable" } else { "Disconnected the cable" };
-        self.update_live(d.index, dev, msg.into(), true);
+        self.update_live(d.index, dev, msg.into());
     }
 
     /// Selects `row` and opens the device menu at (`x`, `y`) in the row:

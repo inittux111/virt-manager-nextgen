@@ -611,26 +611,94 @@ pub fn cdrom(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
         options.push((c.rsplit('/').next().unwrap_or(c).to_owned(), Some(c.clone())));
     }
     let labels: Vec<&str> = options.iter().map(|(l, _)| l.as_str()).collect();
+    let model = gtk::StringList::new(&labels);
     let row = adw::ComboRow::builder()
         .title("Inserted disc")
         .subtitle("Changes right away, also while the machine runs")
-        .model(&gtk::StringList::new(&labels))
+        .model(&model)
         .build();
     row.set_selected(options.iter().position(|(_, p)| *p == current).unwrap_or(0) as u32);
-    let (bind2, live2) = (bind.clone(), live.clone());
-    row.connect_selected_notify(move |r| {
-        let Some((label, path)) = options.get(r.selected() as usize).cloned() else { return };
-        let mut dev = bind2.get(|e| e.clone());
-        dev.remove_children(|c| c.name == "source");
-        if let Some(p) = &path {
-            let pos =
-                dev.children.iter().position(|n| matches!(n, Node::Element(c) if c.name == "target")).unwrap_or(0);
-            dev.set_attr("type", "file");
-            dev.children.insert(pos, Node::Element(Element::new("source").with_attr("file", p)));
+    let options = Rc::new(RefCell::new(options));
+    // Set while the list is changed in code, so that isn't taken as a choice.
+    let quiet = Rc::new(std::cell::Cell::new(false));
+    let insert = {
+        let (bind, live) = (bind.clone(), live.clone());
+        move |label: &str, path: Option<&str>| {
+            let mut dev = bind.get(|e| e.clone());
+            dev.remove_children(|c| c.name == "source");
+            if let Some(p) = path {
+                let pos =
+                    dev.children.iter().position(|n| matches!(n, Node::Element(c) if c.name == "target")).unwrap_or(0);
+                dev.set_attr("type", "file");
+                dev.children.insert(pos, Node::Element(Element::new("source").with_attr("file", p)));
+            }
+            let msg = if path.is_some() { format!("Inserted {label}") } else { "Ejected the disc".into() };
+            live(dev, msg);
         }
-        let msg = if path.is_some() { format!("Inserted {label}") } else { "Ejected the disc".into() };
-        live2(dev, msg);
+    };
+    let insert = Rc::new(insert);
+    let (opts2, quiet2, insert2) = (options.clone(), quiet.clone(), insert.clone());
+    row.connect_selected_notify(move |r| {
+        if quiet2.get() {
+            return;
+        }
+        let Some((label, path)) = opts2.borrow().get(r.selected() as usize).cloned() else { return };
+        insert2(&label, path.as_deref());
     });
+    // A chosen file: shown in the list (once), selected, then inserted.
+    let choose = {
+        let (row, model) = (row.clone(), model.clone());
+        Rc::new(move |path: String| {
+            let label = path.rsplit('/').next().unwrap_or(&path).to_owned();
+            let index = {
+                let mut opts = options.borrow_mut();
+                opts.iter().position(|(_, p)| p.as_deref() == Some(path.as_str())).unwrap_or_else(|| {
+                    opts.push((label.clone(), Some(path.clone())));
+                    model.append(&label);
+                    opts.len() - 1
+                })
+            };
+            quiet.set(true);
+            row.set_selected(index as u32);
+            quiet.set(false);
+            insert(&label, Some(&path));
+        })
+    };
+    // Debug builds: `VMNG_DEV_CDROM_FILE=<path>` acts as if it was browsed to.
+    #[cfg(debug_assertions)]
+    if let Ok(path) = std::env::var("VMNG_DEV_CDROM_FILE") {
+        let choose = choose.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || choose(path));
+    }
+    // Any ISO file, also one libvirt doesn't know yet (e.g. in Downloads).
+    let browse = gtk::Button::builder().label("Browse…").valign(gtk::Align::Center).build();
+    browse.set_tooltip_text(Some("Choose a disc image file"));
+    browse.connect_clicked(move |button| {
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("Disc images"));
+        filter.add_suffix("iso");
+        filter.add_mime_type("application/x-cd-image");
+        let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder()
+            .title("Choose a Disc Image")
+            .filters(&filters)
+            .default_filter(&filter)
+            .modal(true)
+            .build();
+        if let Some(downloads) = gtk::glib::user_special_dir(gtk::glib::UserDirectory::Downloads) {
+            dialog.set_initial_folder(Some(&gtk::gio::File::for_path(downloads)));
+        }
+        let window = button.root().and_downcast::<gtk::Window>();
+        let choose = choose.clone();
+        gtk::glib::spawn_future_local(async move {
+            let Ok(file) = dialog.open_future(window.as_ref()).await else { return };
+            if let Some(path) = file.path() {
+                choose(path.to_string_lossy().into_owned());
+            }
+        });
+    });
+    row.add_suffix(&browse);
     media.add(&row);
     b.append(&media);
     let opts = group("Options");
