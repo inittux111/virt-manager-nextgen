@@ -7,8 +7,8 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use vmng_osinfo::OsInfo;
 use vmng_virt::{
-    DomainCaps, DomainSummary, Firmware, GuestFamily, HostCaps, HostInfo, InstallImage, InstallSource, NetworkChoice,
-    NetworkSummary, NewDisk, NewVm, PoolSummary, unique_name, validate_vm_name,
+    DomainCaps, DomainSummary, FirmwareChoice, GuestFamily, HostCaps, HostInfo, InstallImage, InstallSource,
+    NetworkChoice, NetworkSummary, NewDisk, NewVm, PoolSummary, unique_name, validate_vm_name,
 };
 
 use super::feedback::Feedback;
@@ -299,8 +299,12 @@ impl Wizard {
         group.add(&cpus);
         resources.append(&group);
         let fw_group = adw::PreferencesGroup::builder().title("Firmware").build();
-        let firmware =
-            adw::ComboRow::builder().title("Boot firmware").model(&gtk::StringList::new(&["UEFI", "BIOS"])).build();
+        let firmware = adw::ComboRow::builder()
+            .title("Boot firmware")
+            .use_subtitle(true)
+            .model(&gtk::StringList::new(&["UEFI", "BIOS"]))
+            .list_factory(&super::widgets::full_text_list())
+            .build();
         let secure_boot =
             adw::SwitchRow::builder().title("Secure Boot").subtitle("Only lets signed operating systems start").build();
         let tpm = adw::SwitchRow::builder().title("TPM 2.0").subtitle("Required by Windows 11").build();
@@ -982,6 +986,12 @@ impl Wizard {
         }
         let uefi_ok = caps.as_ref().is_none_or(|c| c.uefi);
         let want_uefi = uefi_ok && (self.ctx.prefs.new_vm_firmware == "uefi" || needs_tpm(os));
+        // UEFI (libvirt picks the file), BIOS, then each firmware file.
+        let arch = self.selected_arch();
+        let mut labels = vec!["UEFI".to_owned(), "BIOS".to_owned()];
+        labels.extend(caps.iter().flat_map(|c| &c.loaders).map(|p| FirmwareChoice::Loader(p.clone()).label(&arch)));
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        self.firmware.set_model(Some(&gtk::StringList::new(&labels)));
         self.firmware.set_selected(if want_uefi { 0 } else { 1 });
         self.firmware.set_sensitive(uefi_ok);
         self.secure_boot.set_active(secure_boot_ok(os));
@@ -1012,12 +1022,31 @@ impl Wizard {
         self.update_firmware_rows();
     }
 
+    /// The firmware chosen in the dropdown (see `apply_os_defaults`).
+    fn firmware_choice(&self) -> FirmwareChoice {
+        match self.firmware.selected() {
+            0 => FirmwareChoice::Uefi { secure_boot: self.secure_boot.is_active() },
+            1 => FirmwareChoice::Bios,
+            n => self
+                .state
+                .borrow()
+                .caps
+                .as_ref()
+                .and_then(|c| c.loaders.get(n as usize - 2).cloned())
+                .map_or(FirmwareChoice::Bios, FirmwareChoice::Loader),
+        }
+    }
+
     fn update_firmware_rows(&self) {
-        let uefi = self.firmware.selected() == 0;
+        let choice = self.firmware.selected();
         let secure_ok = self.state.borrow().caps.as_ref().is_none_or(|c| c.secure_boot);
-        self.secure_boot.set_sensitive(uefi && secure_ok);
-        if !uefi {
-            self.secure_boot.set_active(false);
+        // Secure Boot is a choice for automatic UEFI; a firmware file
+        // either is a Secure Boot build or isn't.
+        self.secure_boot.set_sensitive(choice == 0 && secure_ok);
+        match self.firmware_choice() {
+            FirmwareChoice::Bios => self.secure_boot.set_active(false),
+            FirmwareChoice::Loader(path) => self.secure_boot.set_active(vmng_virt::loader_is_secure(&path)),
+            FirmwareChoice::Uefi { .. } => {}
         }
     }
 
@@ -1138,7 +1167,11 @@ impl Wizard {
             _ => "None".into(),
         };
         add("Disk", disk);
-        let mut fw = if self.firmware.selected() == 0 { "UEFI".to_owned() } else { "BIOS".to_owned() };
+        let mut fw = match self.firmware_choice() {
+            FirmwareChoice::Bios => "BIOS".to_owned(),
+            FirmwareChoice::Uefi { .. } => "UEFI".to_owned(),
+            FirmwareChoice::Loader(path) => format!("UEFI · {}", path.rsplit('/').next().unwrap_or(&path)),
+        };
         if self.secure_boot.is_active() {
             fw.push_str(" · Secure Boot");
         }
@@ -1189,11 +1222,7 @@ impl Wizard {
             virt_type: self.selected_virt(),
             memory: ((self.memory.value() * GIB as f64) as u64 / MIB) * MIB,
             vcpus: self.cpus.value() as u32,
-            firmware: if self.firmware.selected() == 0 {
-                Firmware::Uefi { secure_boot: self.secure_boot.is_active() }
-            } else {
-                Firmware::Bios
-            },
+            firmware: self.firmware_choice(),
             tpm: self.tpm.is_active(),
             cpu_model: self.ctx.prefs.new_vm_cpu_model.clone(),
             install,

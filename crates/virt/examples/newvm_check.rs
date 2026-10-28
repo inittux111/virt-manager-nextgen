@@ -4,7 +4,7 @@
 //! card and a 1 GiB disk; everything is removed again at the end.
 
 use vmng_virt::{
-    Connection, ConnectionKind, Firmware, GuestFamily, InstallSource, NetworkChoice, NewDisk, NewVm, PowerAction,
+    Connection, ConnectionKind, FirmwareChoice, GuestFamily, InstallSource, NetworkChoice, NewDisk, NewVm, PowerAction,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         virt_type: "kvm".into(),
         memory: 1 << 30,
         vcpus: 1,
-        firmware: Firmware::Uefi { secure_boot: dc.secure_boot },
+        firmware: FirmwareChoice::Uefi { secure_boot: dc.secure_boot },
         tpm: false,
         cpu_model: "host-passthrough".into(),
         install: InstallSource::Media(iso),

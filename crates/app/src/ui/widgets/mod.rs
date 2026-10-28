@@ -60,3 +60,31 @@ pub fn labeled_button(icon: &str, label: &str) -> gtk::Button {
     let content = adw::ButtonContent::builder().icon_name(icon).label(label).build();
     gtk::Button::builder().child(&content).valign(gtk::Align::Center).build()
 }
+
+/// A drop-down list that shows each choice in full (the default one cuts
+/// long entries, such as file paths, short), with a check mark on the
+/// selected one. For `adw::ComboRow::set_list_factory`.
+pub fn full_text_list() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else { return };
+        let label = gtk::Label::builder().xalign(0.0).hexpand(true).build();
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        item.bind_property("selected", &check, "opacity")
+            .transform_to(|_, selected: bool| Some(if selected { 1.0 } else { 0.0 }))
+            .sync_create()
+            .build();
+        let row = gtk::Box::builder().spacing(12).build();
+        row.append(&label);
+        row.append(&check);
+        item.set_child(Some(&row));
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else { return };
+        let text = item.item().and_downcast::<gtk::StringObject>().map(|s| s.string()).unwrap_or_default();
+        if let Some(label) = item.child().and_then(|c| c.first_child()).and_downcast::<gtk::Label>() {
+            label.set_label(&text);
+        }
+    });
+    factory
+}

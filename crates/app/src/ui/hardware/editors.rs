@@ -9,7 +9,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use vmng_virt::{DeviceKind, InstallImage, NetworkSummary, PoolSummary, disk_prefix, next_disk_target, units};
+use vmng_virt::{
+    DeviceKind, FirmwareChoice, InstallImage, NetworkSummary, PoolSummary, disk_prefix, next_disk_target, set_firmware,
+    units,
+};
 use vmng_xml::{Element, Node};
 
 use crate::format;
@@ -71,6 +74,10 @@ pub struct Choices {
     pub images: Vec<InstallImage>,
     pub pools: Vec<PoolSummary>,
     pub session: bool,
+    /// The machine's architecture, and the UEFI firmware files libvirt
+    /// offers for it.
+    pub arch: String,
+    pub loaders: Vec<String>,
 }
 
 // ── Row helpers ─────────────────────────────────────────────────────────
@@ -308,19 +315,61 @@ fn bootable(e: &Element) -> bool {
 }
 
 /// Boot & firmware (domain level).
-pub fn boot(bind: &Bind) -> gtk::Box {
+pub fn boot(bind: &Bind, choices: &Choices) -> gtk::Box {
     let b = vbox();
     let fw = group("Firmware");
-    let (firmware, secure) = bind.get(|e| {
-        let efi = e.find_attr("os", "firmware") == Some("efi") || e.find_attr("os/loader", "type") == Some("pflash");
-        let secure = e.find_attr("os/loader", "secure") == Some("yes")
-            || e.find("os/firmware").is_some_and(|f| {
-                f.children_named("feature")
-                    .any(|x| x.attr("name") == Some("secure-boot") && x.attr("enabled") == Some("yes"))
-            });
-        (if efi { "UEFI" } else { "BIOS" }.to_owned(), secure)
+    fw.set_description(Some("Changing the firmware of an installed system usually stops it from starting."));
+    // BIOS, UEFI (libvirt picks the file), then each firmware file, like
+    // virt-manager's list.
+    let current = bind.get(|e| Some(FirmwareChoice::of(e))).unwrap_or(FirmwareChoice::Bios);
+    let mut options = vec![FirmwareChoice::Bios, FirmwareChoice::Uefi { secure_boot: current.secure_boot() }];
+    options.extend(choices.loaders.iter().map(|p| FirmwareChoice::Loader(p.clone())));
+    if !options.contains(&current) && !matches!(current, FirmwareChoice::Uefi { .. }) {
+        options.push(current.clone());
+    }
+    let labels: Vec<String> = options.iter().map(|o| o.label(&choices.arch)).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    // The choice shows as the subtitle, so long file paths can wrap.
+    let row = adw::ComboRow::builder()
+        .title("Firmware")
+        .use_subtitle(true)
+        .model(&gtk::StringList::new(&labels))
+        .list_factory(&crate::ui::widgets::full_text_list())
+        .build();
+    let position = options.iter().position(|o| {
+        std::mem::discriminant(o) == std::mem::discriminant(&current)
+            && (!matches!(o, FirmwareChoice::Loader(_)) || *o == current)
     });
-    fact(&fw, "Boot firmware", &if secure { format!("{firmware} · Secure Boot") } else { firmware });
+    row.set_selected(position.unwrap_or(0) as u32);
+    let secure = adw::SwitchRow::builder()
+        .title("Secure Boot")
+        .subtitle("Only lets signed operating systems start")
+        .active(current.secure_boot())
+        .sensitive(matches!(current, FirmwareChoice::Uefi { .. }))
+        .build();
+    let (bind2, secure2, options2) = (bind.clone(), secure.clone(), options.clone());
+    row.connect_selected_notify(move |r| {
+        let Some(choice) = options2.get(r.selected() as usize).cloned() else { return };
+        let choice = match choice {
+            FirmwareChoice::Uefi { .. } => FirmwareChoice::Uefi { secure_boot: secure2.is_active() },
+            other => other,
+        };
+        secure2.set_sensitive(matches!(choice, FirmwareChoice::Uefi { .. }));
+        if !matches!(choice, FirmwareChoice::Uefi { .. }) {
+            secure2.set_active(choice.secure_boot());
+        }
+        bind2.set(|e| set_firmware(e, &choice));
+    });
+    let bind2 = bind.clone();
+    secure.connect_active_notify(move |s| {
+        // Only automatic UEFI takes Secure Boot as a separate setting.
+        if s.is_sensitive() {
+            let choice = FirmwareChoice::Uefi { secure_boot: s.is_active() };
+            bind2.set(|e| set_firmware(e, &choice));
+        }
+    });
+    fw.add(&row);
+    fw.add(&secure);
     fw.add(&switch(
         bind,
         "Show boot menu",

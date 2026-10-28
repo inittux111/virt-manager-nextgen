@@ -4,9 +4,9 @@
 use virt::domain::Domain;
 use vmng_xml::Element;
 
-use crate::config::Firmware;
 use crate::connection::Connection;
 use crate::error::{Error, Result};
+use crate::firmware::{FirmwareChoice, set_firmware};
 use crate::manage::{unique_file_name, validate_vm_name};
 use crate::units::KIB;
 
@@ -65,7 +65,7 @@ pub struct NewVm {
     /// Memory in bytes.
     pub memory: u64,
     pub vcpus: u32,
-    pub firmware: Firmware,
+    pub firmware: FirmwareChoice,
     pub tpm: bool,
     /// `host-passthrough`, `host-model` or `default`.
     pub cpu_model: String,
@@ -125,16 +125,7 @@ pub fn build_domain_xml(vm: &NewVm, disk_path: Option<&str>) -> Element {
         ty.set_attr("machine", m);
     }
     os.push(ty);
-    let secure = matches!(vm.firmware, Firmware::Uefi { secure_boot: true });
-    if let Firmware::Uefi { secure_boot } = vm.firmware {
-        os.set_attr("firmware", "efi");
-        let yes_no = if secure_boot { "yes" } else { "no" };
-        os.push(
-            el("firmware")
-                .with_child(el("feature").with_attr("enabled", yes_no).with_attr("name", "enrolled-keys"))
-                .with_child(el("feature").with_attr("enabled", yes_no).with_attr("name", "secure-boot")),
-        );
-    }
+    let secure = vm.firmware.secure_boot();
     d.push(os);
 
     let mut features = el("features").with_child(el("acpi"));
@@ -156,6 +147,7 @@ pub fn build_domain_xml(vm: &NewVm, disk_path: Option<&str>) -> Element {
         }
     }
     d.push(features);
+    set_firmware(&mut d, &vm.firmware);
 
     if vm.virt_type == "kvm" && vm.cpu_model != "default" {
         let mut cpu = el("cpu").with_attr("mode", &vm.cpu_model);
@@ -359,7 +351,7 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DomainConfig;
+    use crate::config::{DomainConfig, Firmware};
 
     fn linux() -> NewVm {
         NewVm {
@@ -371,7 +363,7 @@ mod tests {
             virt_type: "kvm".into(),
             memory: 4 << 30,
             vcpus: 2,
-            firmware: Firmware::Uefi { secure_boot: true },
+            firmware: FirmwareChoice::Uefi { secure_boot: true },
             tpm: false,
             cpu_model: "host-passthrough".into(),
             install: InstallSource::Media("/isos/Fedora.iso".into()),
@@ -432,7 +424,7 @@ mod tests {
     #[test]
     fn bios_manual_vm_without_disk() {
         let mut vm = linux();
-        vm.firmware = Firmware::Bios;
+        vm.firmware = FirmwareChoice::Bios;
         vm.install = InstallSource::Manual;
         vm.disk = None;
         vm.network = NetworkChoice::None;
