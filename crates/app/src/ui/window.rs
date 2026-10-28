@@ -37,8 +37,8 @@ fn screenshot_texture(shot: vmng_virt::Screenshot) -> Option<gdk::Texture> {
         vmng_virt::Screenshot::Rgb { width, height, pixels } => {
             // Four bytes per pixel: renderers handle 3-byte RGB poorly.
             let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
-            for p in pixels.chunks_exact(3) {
-                rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
+            for [r, g, b] in pixels.as_chunks::<3>().0 {
+                rgba.extend_from_slice(&[*r, *g, *b, 255]);
             }
             Some(
                 gdk::MemoryTexture::new(
