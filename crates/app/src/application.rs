@@ -13,6 +13,12 @@ use crate::ui::MainWindow;
 /// Runs the application and returns its exit code.
 pub fn run() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(config::APP_ID).build();
+    // Screenshot runs must not hand over to (and disturb) an instance the
+    // person has open, so they run as a separate process.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("VMNG_SCREENSHOT").is_some() {
+        app.set_flags(gtk::gio::ApplicationFlags::NON_UNIQUE);
+    }
     let window: Rc<RefCell<Option<Rc<MainWindow>>>> = Rc::default();
     let settings = Settings::load();
 
