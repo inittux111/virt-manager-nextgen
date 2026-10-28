@@ -4,29 +4,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::gio;
 use gtk::prelude::*;
-use vmng_virt::{DiskConfig, DomainState, DomainSummary, Firmware, GuestDetails, PowerAction};
+use vmng_virt::{DiskConfig, DomainState, DomainSummary, Firmware, GuestDetails};
 
+use super::vm_actions::VmButtons;
 use super::vm_list::{logo_key, os_label, state_text};
 use super::widgets::{
-    Meter, OsLogo, Sparkline, StatusLabel, Tone, boxed_list, card, fact_row, icon_button, labeled_button,
-    section_heading,
+    Meter, OsLogo, Sparkline, StatusLabel, Tone, boxed_list, card, fact_row, labeled_button, section_heading,
 };
 use crate::backend::{HISTORY_LEN, VmLive};
 use crate::format;
-
-/// Actions offered for the shown VM, as `vm.<name>` in menus and buttons.
-const POWER_ACTIONS: [(&str, PowerAction); 8] = [
-    ("start", PowerAction::Start),
-    ("shutdown", PowerAction::Shutdown),
-    ("reboot", PowerAction::Reboot),
-    ("reset", PowerAction::Reset),
-    ("force-off", PowerAction::ForceOff),
-    ("pause", PowerAction::Pause),
-    ("resume", PowerAction::Resume),
-    ("save", PowerAction::Save),
-];
 
 struct StatCard {
     root: gtk::Box,
@@ -70,20 +57,15 @@ impl StatCard {
     }
 }
 
-type ActionFn = Rc<dyn Fn(&str, PowerAction)>;
 type AutostartFn = Rc<dyn Fn(&str, bool)>;
 
 pub struct VmDetails {
     pub root: gtk::ScrolledWindow,
     uuid: RefCell<Option<String>>,
-    actions: gio::SimpleActionGroup,
     logo: OsLogo,
     name: gtk::Label,
     status: StatusLabel,
-    primary_start: gtk::Button,
-    primary_console: gtk::Button,
-    pause: gtk::Button,
-    resume: gtk::Button,
+    buttons: VmButtons,
     preview: gtk::Stack,
     preview_caption: gtk::Label,
     cpu: StatCard,
@@ -101,7 +83,6 @@ pub struct VmDetails {
     storage: gtk::Box,
     /// Built for the current disk count; `None` until first shown.
     storage_meters: RefCell<Option<Vec<Meter>>>,
-    on_action: RefCell<Option<ActionFn>>,
     on_autostart: RefCell<Option<AutostartFn>>,
 }
 
@@ -109,10 +90,6 @@ impl std::fmt::Debug for VmDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VmDetails").field("uuid", &self.uuid).finish_non_exhaustive()
     }
-}
-
-fn menu_item(label: &str, action: &str) -> gio::MenuItem {
-    gio::MenuItem::new(Some(label), Some(action))
 }
 
 impl VmDetails {
@@ -135,66 +112,11 @@ impl VmDetails {
         titles.append(&name);
         titles.append(&status.root);
 
-        let primary_start = labeled_button("media-playback-start-symbolic", "Start");
-        primary_start.set_action_name(Some("vm.start"));
-        primary_start.add_css_class("suggested-action");
-        let primary_console = labeled_button("video-display-symbolic", "Open Console");
-        primary_console.set_action_name(Some("vm.console"));
-        primary_console.add_css_class("suggested-action");
-        let pause = icon_button("media-playback-pause-symbolic", "Pause");
-        pause.set_action_name(Some("vm.pause"));
-        let resume = icon_button("media-playback-start-symbolic", "Resume");
-        resume.set_action_name(Some("vm.resume"));
-
-        let power_menu = gio::Menu::new();
-        let soft = gio::Menu::new();
-        soft.append_item(&menu_item("Shut Down", "vm.shutdown"));
-        soft.append_item(&menu_item("Reboot", "vm.reboot"));
-        soft.append_item(&menu_item("Save and Stop", "vm.save"));
-        power_menu.append_section(None, &soft);
-        let hard = gio::Menu::new();
-        hard.append_item(&menu_item("Force Reset", "vm.reset"));
-        hard.append_item(&menu_item("Force Off", "vm.force-off"));
-        power_menu.append_section(None, &hard);
-        let power = gtk::MenuButton::builder()
-            .icon_name("system-shutdown-symbolic")
-            .menu_model(&power_menu)
-            .tooltip_text("Power options")
-            .valign(gtk::Align::Center)
-            .build();
-        power.update_property(&[gtk::accessible::Property::Label("Power options")]);
-
-        let more_menu = gio::Menu::new();
-        let manage = gio::Menu::new();
-        manage.append_item(&menu_item("Clone…", "vm.clone"));
-        manage.append_item(&menu_item("Snapshots", "vm.snapshots"));
-        more_menu.append_section(None, &manage);
-        let danger = gio::Menu::new();
-        danger.append_item(&menu_item("Delete…", "vm.delete"));
-        more_menu.append_section(None, &danger);
-        let more = gtk::MenuButton::builder()
-            .icon_name("view-more-symbolic")
-            .menu_model(&more_menu)
-            .tooltip_text("More actions")
-            .valign(gtk::Align::Center)
-            .build();
-        more.update_property(&[gtk::accessible::Property::Label("More actions")]);
-
-        let buttons = gtk::Box::builder().spacing(8).valign(gtk::Align::Center).build();
-        for w in [
-            primary_start.upcast_ref::<gtk::Widget>(),
-            primary_console.upcast_ref(),
-            pause.upcast_ref(),
-            resume.upcast_ref(),
-            power.upcast_ref(),
-            more.upcast_ref(),
-        ] {
-            buttons.append(w);
-        }
+        let buttons = VmButtons::new();
         let header = gtk::Box::builder().spacing(16).css_classes(["details-header"]).build();
         header.append(&logo);
         header.append(&titles);
-        header.append(&buttons);
+        header.append(&buttons.root);
 
         // Console preview.
         let preview = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
@@ -265,7 +187,7 @@ impl VmDetails {
         let pages = gtk::Box::builder().spacing(8).margin_top(4).build();
         let hardware = labeled_button("emblem-system-symbolic", "Hardware");
         hardware.set_action_name(Some("vm.hardware"));
-        let snapshots = labeled_button("document-open-recent-symbolic", "Snapshots");
+        let snapshots = labeled_button("camera-photo-symbolic", "Snapshots");
         snapshots.set_action_name(Some("vm.snapshots"));
         pages.append(&hardware);
         pages.append(&snapshots);
@@ -290,20 +212,13 @@ impl VmDetails {
             .child(&clamp)
             .build();
 
-        let actions = gio::SimpleActionGroup::new();
-        root.insert_action_group("vm", Some(&actions));
-
         let this = Rc::new(Self {
             root,
             uuid: RefCell::default(),
-            actions,
             logo,
             name,
             status,
-            primary_start,
-            primary_console,
-            pause,
-            resume,
+            buttons,
             preview,
             preview_caption,
             cpu,
@@ -320,29 +235,8 @@ impl VmDetails {
             autostart_guard: RefCell::new(false),
             storage,
             storage_meters: RefCell::default(),
-            on_action: RefCell::default(),
             on_autostart: RefCell::default(),
         });
-
-        for (name, action) in POWER_ACTIONS {
-            let a = gio::SimpleAction::new(name, None);
-            let weak = Rc::downgrade(&this);
-            a.connect_activate(move |_, _| {
-                let Some(this) = weak.upgrade() else { return };
-                let uuid = this.uuid.borrow().clone();
-                let cb = this.on_action.borrow().clone();
-                if let (Some(uuid), Some(f)) = (uuid, cb) {
-                    f(&uuid, action);
-                }
-            });
-            this.actions.add_action(&a);
-        }
-        // Screens that arrive in later milestones.
-        for name in ["console", "clone", "delete", "hardware", "snapshots"] {
-            let a = gio::SimpleAction::new(name, None);
-            a.set_enabled(false);
-            this.actions.add_action(&a);
-        }
 
         let weak = Rc::downgrade(&this);
         this.autostart.connect_active_notify(move |row| {
@@ -359,18 +253,8 @@ impl VmDetails {
         this
     }
 
-    pub fn connect_action(&self, f: impl Fn(&str, PowerAction) + 'static) {
-        self.on_action.replace(Some(Rc::new(f)));
-    }
-
     pub fn connect_autostart(&self, f: impl Fn(&str, bool) + 'static) {
         self.on_autostart.replace(Some(Rc::new(f)));
-    }
-
-    fn enable(&self, name: &str, on: bool) {
-        if let Some(a) = self.actions.lookup_action(name).and_downcast::<gio::SimpleAction>() {
-            a.set_enabled(on);
-        }
     }
 
     /// Shows a VM. `live` and `guest` may be missing while data loads.
@@ -384,17 +268,7 @@ impl VmDetails {
 
         let s = d.state;
         let off = matches!(s, DomainState::ShutOff | DomainState::Crashed);
-        self.primary_start.set_visible(off);
-        self.primary_console.set_visible(!off);
-        self.pause.set_visible(s == DomainState::Running);
-        self.resume.set_visible(matches!(s, DomainState::Paused | DomainState::Suspended));
-        self.enable("start", off);
-        self.enable("pause", s == DomainState::Running);
-        self.enable("resume", s == DomainState::Paused);
-        for name in ["shutdown", "reboot", "reset", "force-off"] {
-            self.enable(name, s.is_active());
-        }
-        self.enable("save", matches!(s, DomainState::Running | DomainState::Paused));
+        self.buttons.update(s);
 
         self.preview.set_visible_child_name(match s {
             _ if off => "off",
@@ -590,7 +464,7 @@ impl VmDetails {
 }
 
 /// "VirtIO disk (vda)", "SATA disk (sdb)", …
-fn disk_title(d: &DiskConfig) -> String {
+pub fn disk_title(d: &DiskConfig) -> String {
     let bus = match d.bus.as_deref() {
         Some("virtio") => "VirtIO",
         Some("sata") => "SATA",

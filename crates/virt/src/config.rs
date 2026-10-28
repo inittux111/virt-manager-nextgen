@@ -81,6 +81,9 @@ pub struct DomainConfig {
     /// Hypervisor type, e.g. `kvm` or `qemu`.
     pub domain_type: String,
     pub firmware: Option<Firmware>,
+    /// Path and format of the per-VM UEFI variable store, if any.
+    pub nvram_path: Option<String>,
+    pub nvram_format: Option<String>,
     pub disks: Vec<DiskConfig>,
     pub interfaces: Vec<InterfaceConfig>,
     pub graphics: Vec<GraphicsConfig>,
@@ -118,6 +121,8 @@ impl DomainConfig {
             machine: dom.find_attr("os/type", "machine").map(str::to_owned),
             domain_type: dom.attr("type").unwrap_or("qemu").to_owned(),
             firmware: firmware(dom),
+            nvram_path: dom.find_text("os/nvram").filter(|p| !p.is_empty()),
+            nvram_format: dom.find_attr("os/nvram", "format").map(str::to_owned),
             disks: devs("disk").map(disk).collect(),
             interfaces: devs("interface").map(interface).collect(),
             graphics: devs("graphics")

@@ -135,7 +135,11 @@ impl Connection {
         })
     }
 
-    fn domain(&self, uuid: &str) -> Result<Domain> {
+    pub(crate) fn raw(&self) -> &Connect {
+        &self.conn
+    }
+
+    pub(crate) fn domain(&self, uuid: &str) -> Result<Domain> {
         Domain::lookup_by_uuid_string(&self.conn, uuid).map_err(Error::from)
     }
 

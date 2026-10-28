@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `PLAN.md` is the source of truth for goals, scope and the required feature list. Read it before starting any feature work.
 
-Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots, 4 New VM wizard, 5 hardware details / Add Hardware / XML editing, 6 console (SPICE/VNC/serial), 7 host overview, networks, storage, Preferences, 8 graphs, guest agent, tray, 9 app icon + polish, then the RPM. Power actions (start, pause, shut down, reboot, reset, force off, save) and autostart already work; screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
+Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard, 5 hardware details / Add Hardware / XML editing, 6 console (SPICE/VNC/serial), 7 host overview, networks, storage, Preferences, 8 graphs, guest agent, tray, 9 app icon + polish, then the RPM. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
 
 ## Commands
 
@@ -19,9 +19,10 @@ toolbox run -c virt-manager-nextgen cargo clippy --workspace --all-targets
 toolbox run -c virt-manager-nextgen cargo fmt --all
 ./target/debug/virt-manager-nextgen                                   # run on the host
 toolbox run -c virt-manager-nextgen cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
+./target/debug/examples/selftest <empty-dir>   # end-to-end snapshot/clone/rename/delete on a throwaway qemu:///session VM (build with --example selftest)
 ```
 
-UI review without touching the real desktop: start a headless compositor on the host (`mutter --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display=vmng-test &`), then run the debug binary with `WAYLAND_DISPLAY=vmng-test VMNG_SCREENSHOT=/path/out.png` (optional `VMNG_SCREENSHOT_DELAY=<secs>`); it renders the window to a PNG and quits (debug builds only, `crates/app/src/dev.rs`). Theme variants: `ADW_DEBUG_COLOR_SCHEME=prefer-dark|prefer-light`, `ADW_DEBUG_HIGH_CONTRAST=1`; for plain Adwaita (without Abyss) point `XDG_CONFIG_HOME` at a directory without `gtk-4.0/gtk.css`. Only one instance per app id runs per session, so take screenshots one at a time. For a running-VM test, use a transient domain on `qemu:///session` (`virsh create`) and destroy it afterwards; never start or change the user's own VMs.
+UI review without touching the real desktop: start a headless compositor on the host (`mutter --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display=vmng-test &`), then run the debug binary with `WAYLAND_DISPLAY=vmng-test VMNG_SCREENSHOT=/path/out.png` (optional `VMNG_SCREENSHOT_DELAY=<secs>`); it renders the window to a PNG and quits (debug builds only, `crates/app/src/dev.rs`). `VMNG_DEV_SELECT=<vm name>` and `VMNG_DEV_ACTION=<action>` (e.g. `vm.snapshots`, `vm.clone`) open deeper screens first. Theme variants: `ADW_DEBUG_COLOR_SCHEME=prefer-dark|prefer-light`, `ADW_DEBUG_HIGH_CONTRAST=1`; for plain Adwaita (without Abyss) point `XDG_CONFIG_HOME` at a directory without `gtk-4.0/gtk.css`. Only one instance per app id runs per session, so take screenshots one at a time. For a running-VM test, use a transient domain on `qemu:///session` (`virsh create`) and destroy it afterwards; never start or change the user's own VMs.
 
 ## Architecture
 
@@ -35,8 +36,13 @@ Cargo workspace (edition 2024):
   - `osdb.rs`: loads osinfo-db once on its own thread; display names and logo keys for osinfo ids.
   - `settings.rs`: preferences in `~/.config/virt-manager-nextgen/settings.ini` (GLib `KeyFile`, no GSettings schema).
   - `ui/widgets/`: shared building blocks (OS logo tile, sparkline, status dot + label, usage meter, card/list helpers). New screens must reuse these.
-  - `ui/window.rs` owns connection state and the poll timer; `ui/vm_list.rs`, `ui/vm_details.rs`, `ui/title_menu.rs` are the Machines view.
+  - `ui/window.rs` owns connection state, the poll timer, the `adw::NavigationView` (main page + per-VM page) and dispatches `vm.*` actions.
+  - `ui/vm_actions.rs`: the single `vm.*` action group (enabled per VM state) plus the shared VM buttons and menus; every VM control uses these action names.
+  - `ui/feedback.rs` (toasts, error toast with details, confirmations) and `ui/widgets/form_dialog.rs` (Cancel / primary / inline error) are the standard dialogs.
+  - Machines view: `ui/vm_list.rs`, `ui/vm_details.rs`, `ui/title_menu.rs`. VM page: `ui/vm_page.rs` (tabs), `ui/snapshots.rs`. `ui/vm_dialogs.rs`: clone, rename, delete.
   - `style.css` is loaded at APPLICATION priority and uses only libadwaita CSS variables. Graph colours: `sparkline.cpu|memory|disk|network`.
+
+Long-running operations (clone) show progress in the window's job bar; libvirt work reports progress through atomics polled by a GLib timeout.
 
 Dependencies so far: `gtk4`, `libadwaita`, `virt` (all required to use the platform). Everything else is in-house.
 
