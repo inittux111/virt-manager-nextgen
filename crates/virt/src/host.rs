@@ -55,6 +55,9 @@ pub struct DomainCaps {
     pub machine: String,
     pub uefi: bool,
     pub secure_boot: bool,
+    /// UEFI firmware files that can be chosen by path (virt-manager lists
+    /// them as "UEFI x86_64: /usr/share/…").
+    pub loaders: Vec<String>,
     pub tpm: bool,
     pub video_models: Vec<String>,
     pub graphics_types: Vec<String>,
@@ -76,6 +79,10 @@ impl DomainCaps {
             machine: xml.find_text("machine").unwrap_or_default(),
             uefi: firmware.iter().any(|f| f == "efi"),
             secure_boot: enum_values(loader, "secure").iter().any(|v| v == "yes"),
+            loaders: loader
+                .filter(|l| l.attr("supported") == Some("yes"))
+                .map(|l| l.children_named("value").map(Element::text).filter(|v| v.starts_with('/')).collect())
+                .unwrap_or_default(),
             tpm: tpm.is_some_and(|t| t.attr("supported") == Some("yes"))
                 && enum_values(tpm, "backendModel").iter().any(|b| b == "emulator"),
             video_models: enum_values(xml.find("devices/video"), "modelType"),

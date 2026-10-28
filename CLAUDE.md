@@ -25,6 +25,7 @@ toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo run -p vmng-
 ./target/debug/examples/newvm_check qemu:///system default <iso>   # create/start/delete a throwaway vmng-test-newvm
 ./target/debug/examples/hw_check qemu:///system default <iso>   # device add/edit/live-update/remove on a throwaway vmng-test-hw
 ./target/debug/examples/net_pool_check qemu:///system <empty-dir>   # create/edit/remove vmng-test-net and vmng-test-pool
+./target/debug/examples/firmware_check   # starts a throwaway vmng-test-firmware on qemu:///session with BIOS, UEFI and each UEFI firmware file, and switches files (vmng-virt firmware.rs: FirmwareChoice, set_firmware)
 ./target/debug/examples/identify <iso>…   # OS detection (vmng-osinfo example)
 ./target/debug/examples/selftest <empty-dir>   # end-to-end snapshot/clone/rename/delete on a throwaway qemu:///session VM (build with --example selftest)
 ```

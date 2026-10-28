@@ -3,8 +3,8 @@
 //! Usage: `hw_check <uri> <pool> <iso>`. Everything is removed at the end.
 
 use vmng_virt::{
-    Connection, ConnectionKind, DeviceKind, Firmware, GuestFamily, InstallSource, NetworkChoice, NewVm, PowerAction,
-    list_devices, next_disk_target,
+    Connection, ConnectionKind, DeviceKind, FirmwareChoice, GuestFamily, InstallSource, NetworkChoice, NewVm,
+    PowerAction, list_devices, next_disk_target,
 };
 use vmng_xml::Element;
 
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         virt_type: "kvm".into(),
         memory: 512 << 20,
         vcpus: 1,
-        firmware: Firmware::Bios,
+        firmware: FirmwareChoice::Bios,
         tpm: false,
         cpu_model: "host-passthrough".into(),
         install: InstallSource::Media(iso.clone()),
