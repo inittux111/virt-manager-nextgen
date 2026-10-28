@@ -77,10 +77,14 @@ pub fn set_enabled(app: &impl IsA<gtk::Application>, enabled: bool) {
     }
 }
 
-/// [`set_enabled`] on the running application.
+/// [`set_enabled`] on the running application, plus GTK's own F10 (which
+/// opens the main menu).
 pub fn set_app_enabled(enabled: bool) {
     if let Some(app) = gtk::gio::Application::default().and_downcast::<gtk::Application>() {
         set_enabled(&app, enabled);
+        for window in app.windows() {
+            window.set_handle_menubar_accel(enabled);
+        }
     }
 }
 

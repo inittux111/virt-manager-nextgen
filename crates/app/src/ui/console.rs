@@ -439,11 +439,15 @@ impl ConsolePage {
                 this.update_caption();
             }
         });
-        // The text console gets every key too (like a terminal app would).
-        let focus = gtk::EventControllerFocus::new();
-        focus.connect_enter(|_| super::shortcuts::set_app_enabled(false));
-        focus.connect_leave(|_| super::shortcuts::set_app_enabled(true));
-        self.terminal.widget().add_controller(focus);
+        // While the screen or the text console has the keyboard focus, every
+        // key belongs to the guest (like in a terminal app), even before
+        // the screen takes the keyboard with a click.
+        for widget in [self.screen.upcast_ref::<gtk::Widget>(), self.terminal.widget().upcast_ref()] {
+            let focus = gtk::EventControllerFocus::new();
+            focus.connect_enter(|_| super::shortcuts::set_app_enabled(false));
+            focus.connect_leave(|_| super::shortcuts::set_app_enabled(true));
+            widget.add_controller(focus);
+        }
         let weak = Rc::downgrade(self);
         self.screen.connect_size_changed(move |w, h| {
             if let Some(this) = weak.upgrade() {
