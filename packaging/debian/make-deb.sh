@@ -22,7 +22,8 @@ install -Dm644 "data/icons/hicolor/symbolic/apps/$app_id-symbolic.svg" \
     "$root/usr/share/icons/hicolor/symbolic/apps/$app_id-symbolic.svg"
 install -Dm644 LICENSE "$root/usr/share/doc/virt-manager-nextgen/copyright"
 
-# The libraries the program links to, as Debian package dependencies.
+# The libraries the program links to, as Debian package dependencies (plus
+# the GTK and libadwaita versions the app needs, which the scan can't see).
 mkdir -p /work/shlibs/debian
 printf 'Source: virt-manager-nextgen\n\nPackage: virt-manager-nextgen\nArchitecture: any\n' >/work/shlibs/debian/control
 libs=$(cd /work/shlibs && dpkg-shlibdeps -O "$root/usr/bin/virt-manager-nextgen" | sed -n 's/^shlibs:Depends=//p')
@@ -33,7 +34,7 @@ Package: virt-manager-nextgen
 Version: $version
 Architecture: $arch
 Maintainer: ${MAINTAINER:-virt-manager-nextgen builder <noreply@localhost>}
-Depends: $libs, osinfo-db
+Depends: $libs, libgtk-4-1 (>= 4.20), libadwaita-1-0 (>= 1.8), osinfo-db
 Recommends: libvirt-daemon-system, qemu-system-x86 | qemu-system
 Suggests: swtpm, swtpm-tools
 Section: admin
