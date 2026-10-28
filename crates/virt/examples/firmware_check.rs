@@ -60,7 +60,10 @@ fn run(conn: &Connection, fw: FirmwareChoice, keep: bool) -> Result<String, Box<
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     vmng_virt::init();
-    let conn = Connection::open(ConnectionKind::from_uri("qemu:///session"))?;
+    // VMNG_TEST_URI picks another libvirt (the test pipeline's Debian
+    // container); by default the user session.
+    let uri = std::env::var("VMNG_TEST_URI").unwrap_or_else(|_| "qemu:///session".into());
+    let conn = Connection::open(ConnectionKind::from_uri(&uri))?;
     let dc = conn.domain_caps("x86_64", Some("q35"), "kvm")?;
     println!("firmware files: {:#?}", dc.loaders);
     let mut failed = 0;

@@ -1,0 +1,30 @@
+# Dependabot: Rust crates (shared by the Fedora and Debian builds) and the
+# GitHub Actions used by the CI workflow. System libraries (GTK, libvirt, …)
+# come from Fedora and Debian themselves; the CI always uses their newest
+# images, so a breaking distribution update shows up as a failed check.
+# Security alerts and security-fix pull requests are switched on in the
+# repository settings; every pull request is built and tested on both.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    # One pull request with all compatible crate updates each week.
+    groups:
+      crates:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "Update crates"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "Update CI actions"
