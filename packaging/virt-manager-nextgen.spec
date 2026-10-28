@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.1.7
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -89,6 +89,10 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Wed Oct 28 2026 Maarten <github@feedmebits.nl> - 0.2.0-1
+- Make build-deb.sh independent of build-rpm.sh
+- Update CI actions: Bump the actions group with 2 updates
+
 * Wed Oct 28 2026 Maarten <github@feedmebits.nl> - 0.1.7-1
 - CI: install SVG support for the Debian 13 tests
 - Fix a crash with Windows guests that run the guest agent

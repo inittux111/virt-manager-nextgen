@@ -42,6 +42,14 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-10-28">
+      <description>
+        <ul>
+          <li>Make build-deb.sh independent of build-rpm.sh</li>
+          <li>Update CI actions: Bump the actions group with 2 updates</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.7" date="2026-10-28">
       <description>
         <ul>
