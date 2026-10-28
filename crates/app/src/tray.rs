@@ -261,6 +261,9 @@ impl Tray {
                     "Status" => "Active".to_variant(),
                     "WindowId" => 0i32.to_variant(),
                     "IconName" => icon.to_variant(),
+                    // Development builds aren't installed, so point the host at our icons.
+                    #[cfg(debug_assertions)]
+                    "IconThemePath" => crate::config::DEV_ICON_DIR.to_variant(),
                     "ItemIsMenu" => false.to_variant(),
                     "Menu" => {
                         glib::variant::ObjectPath::try_from(MENU_PATH.to_owned()).expect("valid path").to_variant()

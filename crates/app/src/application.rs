@@ -25,6 +25,7 @@ pub fn run() -> glib::ExitCode {
     let s = settings.clone();
     app.connect_startup(move |app| {
         load_css();
+        load_icons();
         setup_actions(app, &s);
     });
 
@@ -52,6 +53,14 @@ fn load_css() {
         // ~/.config/gtk-4.0/gtk.css theme always wins.
         gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
     }
+}
+
+fn load_icons() {
+    #[cfg(debug_assertions)]
+    if let Some(display) = gdk::Display::default() {
+        gtk::IconTheme::for_display(&display).add_search_path(config::DEV_ICON_DIR);
+    }
+    gtk::Window::set_default_icon_name(config::APP_ID);
 }
 
 fn setup_actions(app: &adw::Application, settings: &Settings) {

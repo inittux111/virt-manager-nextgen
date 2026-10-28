@@ -1000,7 +1000,7 @@ impl MainWindow {
         }
         let Some(conn) = conn else { return };
         let weak = Rc::downgrade(self);
-        match crate::tray::Tray::new(&conn, "computer-symbolic", move |cmd| {
+        match crate::tray::Tray::new(&conn, crate::config::TRAY_ICON, move |cmd| {
             if let Some(this) = weak.upgrade() {
                 this.tray_command(cmd);
             }
