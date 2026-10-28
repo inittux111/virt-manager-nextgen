@@ -10,15 +10,15 @@ Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host s
 
 ## Commands
 
-All commands run inside the toolbox. The built binary runs on the host (its runtime libraries are installed there).
+All commands run inside the toolbox. Toolbox shares the home directory with the host, so cargo must use the container-only `CARGO_HOME=/opt/cargo` (created inside the container; plain `toolbox run` does not read `/etc/profile.d`, so pass it explicitly as below). Never let cargo write to `~/.cargo` on the host. The built binary in `target/` (inside the repo, gitignored) runs on the host because its runtime libraries are installed there.
 
 ```sh
-toolbox run -c virt-manager-nextgen cargo build                       # debug build
-toolbox run -c virt-manager-nextgen cargo test --workspace            # unit tests (osinfo tests need osinfo-db, present in the toolbox)
-toolbox run -c virt-manager-nextgen cargo clippy --workspace --all-targets
-toolbox run -c virt-manager-nextgen cargo fmt --all
+toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo build                       # debug build
+toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo test --workspace            # unit tests (osinfo tests need osinfo-db, present in the toolbox)
+toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo clippy --workspace --all-targets
+toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo fmt --all
 ./target/debug/virt-manager-nextgen                                   # run on the host
-toolbox run -c virt-manager-nextgen cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
+toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
 ./target/debug/examples/newvm_check qemu:///system default <iso>   # create/start/delete a throwaway vmng-test-newvm
 ./target/debug/examples/identify <iso>…   # OS detection (vmng-osinfo example)
 ./target/debug/examples/selftest <empty-dir>   # end-to-end snapshot/clone/rename/delete on a throwaway qemu:///session VM (build with --example selftest)
@@ -58,7 +58,7 @@ A modern rewrite of virt-manager: a desktop front-end for QEMU/KVM through libvi
 - **Language and UI:** Rust with GTK4 + libadwaita. The user's custom theme (Abyss, in `~/.themes/Abyss`) is applied through `~/.config/gtk-4.0/gtk.css`, which overrides libadwaita's CSS color variables (`--window-bg-color`, `--accent-bg-color`, `--card-bg-color`, …) at user priority. That means libadwaita apps get the full theme, while plain GTK4 apps only get the theme's minimal `gtk-4.0/gtk.css`. Style only with libadwaita's named colors/variables, never hard-coded colors, and never load app CSS that outranks user CSS. Color rules are in `PLAN.md`.
 - **Dependencies:** add an external crate only when it is truly necessary, for security, performance and modularity reasons. Prefer the standard library and in-house code. Justify every new dependency.
 - **Code quality:** structure the code the way a professional Rust project would be structured, with a long-term maintainability focus. Security and performance are first-class concerns, especially since the app handles libvirt connections, XML and guest consoles.
-- **Development environment:** all builds and dev libraries live in a **toolbox container**. Never install development packages on the host. The project's toolbox is `virt-manager-nextgen` (Fedora 44, with Rust, GTK4, libadwaita, libvirt, libosinfo and rpm-build dev packages installed). Run cargo and system-package commands inside it, for example `toolbox run -c virt-manager-nextgen cargo build`.
+- **Development environment:** all builds and dev libraries live in a **toolbox container**. Never install development packages on the host. The project's toolbox is `virt-manager-nextgen` (Fedora 44, with Rust, GTK4, libadwaita, libvirt, libosinfo and rpm-build dev packages installed). Run cargo and system-package commands inside it, for example `toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo build`.
 - **Packaging:** the end deliverable includes an RPM built from source inside the toolbox (rpmbuild with a `.spec` file kept in the repo). The host is Fedora 44, so the toolbox must use the same Fedora release, or the RPM's library dependencies won't match the host. The RPM must install the binary, a `.desktop` file, the app icon and AppStream metainfo, and declare runtime `Requires`. Once the build exists, document the single command that produces the RPM in this file.
 - **Guest OS detection:** uses libosinfo with osinfo-db `20251212`.
 - **System tray:** AyatanaAppIndicator3 is not installed, so tray support may not work. Treat it as optional and degrade gracefully.
