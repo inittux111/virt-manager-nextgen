@@ -12,7 +12,9 @@ mod config;
 mod connection;
 mod domain;
 mod error;
+mod host;
 mod manage;
+mod new_vm;
 mod snapshot;
 mod stats;
 pub mod units;
@@ -21,7 +23,9 @@ pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceCo
 pub use connection::{Connection, ConnectionKind, GuestDetails, HostInfo, PoolSummary};
 pub use domain::{DomainState, DomainSummary, PowerAction};
 pub use error::{Error, Result};
+pub use host::{DomainCaps, GuestArch, HostCaps, InstallImage, NetworkSummary};
 pub use manage::{CloneDiskMode, unique_name, validate_vm_name};
+pub use new_vm::{Created, GuestFamily, InstallSource, NetworkChoice, NewDisk, NewVm, build_domain_xml};
 pub use snapshot::{SnapshotInfo, SnapshotLocation, validate_snapshot_name};
 pub use stats::{BlockStats, DomainStats, HostStats, NetStats};
 

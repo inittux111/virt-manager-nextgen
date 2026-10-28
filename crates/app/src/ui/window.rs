@@ -47,6 +47,8 @@ struct State {
     timer: Option<glib::SourceId>,
     /// A VM to select once it appears in the list (e.g. a new clone).
     pending_select: Option<String>,
+    /// A VM page to open once the VM appears (e.g. "customize before install").
+    pending_page: Option<(String, VmTab)>,
 }
 
 pub struct MainWindow {
@@ -269,6 +271,7 @@ impl MainWindow {
                 tick: 0,
                 timer: None,
                 pending_select: None,
+                pending_page: None,
             }),
         });
 
@@ -296,10 +299,14 @@ impl MainWindow {
     }
 
     fn setup_actions(self: &Rc<Self>) {
-        // Features that arrive in later milestones stay visible but disabled.
-        for name in ["new-vm", "import-disk"] {
+        for (name, import) in [("new-vm", false), ("import-disk", true)] {
             let a = gio::SimpleAction::new(name, None);
-            a.set_enabled(false);
+            let weak = Rc::downgrade(self);
+            a.connect_activate(move |_, _| {
+                if let Some(this) = weak.upgrade() {
+                    this.open_new_vm(import);
+                }
+            });
             self.window.add_action(&a);
         }
         let weak = Rc::downgrade(self);
@@ -615,6 +622,12 @@ impl MainWindow {
                 self.vm_list.select(&uuid);
             }
             self.vm_list.ensure_selection();
+            let page = self.state.borrow_mut().pending_page.take();
+            if let Some((uuid, tab)) = page
+                && let Some(vm) = self.vm_by_uuid(&uuid)
+            {
+                self.open_vm_page(&vm, tab);
+            }
         }
         #[cfg(debug_assertions)]
         if tick == 1 {
@@ -779,6 +792,40 @@ impl MainWindow {
                 let _ = WidgetExt::activate_action(&window, &action, None);
             });
         }
+    }
+
+    fn open_new_vm(self: &Rc<Self>, import: bool) {
+        let Some(conn) = self.current_conn() else {
+            self.feedback.toast("Connect to a hypervisor first.");
+            return;
+        };
+        let (session, host, domains) = {
+            let st = self.state.borrow();
+            (st.current == ConnectionKind::Session, st.host_info.clone(), st.domains.clone())
+        };
+        let ctx = super::new_vm::WizardContext {
+            conn,
+            session,
+            prefs: self.settings.get(),
+            host,
+            domains,
+            feedback: self.feedback.clone(),
+            import,
+        };
+        let weak = Rc::downgrade(self);
+        super::new_vm::open(&self.window, ctx, move |uuid, customize| {
+            if let Some(this) = weak.upgrade() {
+                {
+                    let mut st = this.state.borrow_mut();
+                    st.pending_select = Some(uuid.clone());
+                    if customize {
+                        st.pending_page = Some((uuid, VmTab::Hardware));
+                    }
+                }
+                this.set_view(View::Machines);
+                this.refresh();
+            }
+        });
     }
 
     fn vm_by_uuid(&self, uuid: &str) -> Option<DomainSummary> {

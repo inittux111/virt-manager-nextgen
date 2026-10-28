@@ -22,6 +22,8 @@ opaque!(
     OsinfoProduct,
     OsinfoEntity,
     OsinfoMedia,
+    OsinfoResources,
+    OsinfoResourcesList,
     GCancellable
 );
 
@@ -65,6 +67,13 @@ unsafe extern "C" {
         err: *mut *mut GError,
     ) -> *mut OsinfoMedia;
     pub fn osinfo_media_get_os(media: *mut OsinfoMedia) -> *mut OsinfoOs;
+
+    pub fn osinfo_os_get_minimum_resources(os: *mut OsinfoOs) -> *mut OsinfoResourcesList;
+    pub fn osinfo_os_get_recommended_resources(os: *mut OsinfoOs) -> *mut OsinfoResourcesList;
+    pub fn osinfo_resources_get_architecture(res: *mut OsinfoResources) -> *const c_char;
+    pub fn osinfo_resources_get_n_cpus(res: *mut OsinfoResources) -> c_int;
+    pub fn osinfo_resources_get_ram(res: *mut OsinfoResources) -> i64;
+    pub fn osinfo_resources_get_storage(res: *mut OsinfoResources) -> i64;
 }
 
 #[link(name = "gobject-2.0")]
