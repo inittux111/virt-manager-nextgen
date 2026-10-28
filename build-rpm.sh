@@ -1,9 +1,15 @@
 #!/bin/sh
-# Builds the RPM inside the project's toolbox container. Run it on the host
-# from anywhere:
+# Builds a new version of the RPM inside the project's toolbox container.
+# Run it on the host:
 #
-#   ./build-rpm.sh
+#   ./build-rpm.sh            next version, e.g. 0.1.1 → 0.1.2 (fixes)
+#   ./build-rpm.sh minor      e.g. 0.1.2 → 0.2.0 (new features)
+#   ./build-rpm.sh major      e.g. 0.2.0 → 1.0.0
+#   ./build-rpm.sh 1.2.3      a version of your choice
+#   ./build-rpm.sh --rebuild  the current version again, no new number
 #
+# Each new version is committed and tagged in git (packaging/new-version.sh),
+# with the commit titles since the last version as its "what's new".
 # The first run creates the container (same Fedora release as this
 # computer, so the package's library versions match) and installs the
 # build tools into it; nothing is installed on the host. Only committed
@@ -33,6 +39,10 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "Note: there are uncommitted changes; they are not in this build." >&2
 fi
 
+if [ "${1:-}" != "--rebuild" ]; then
+    packaging/new-version.sh "$@"
+fi
+
 toolbox run -c "$box" packaging/build-rpm.sh
 
 version=$(sed -n 's/^Version: *//p' "$spec")
@@ -41,3 +51,6 @@ echo
 echo "Built $rpm"
 echo "Install or upgrade it with:"
 echo "  sudo dnf install ./$rpm"
+if [ "${1:-}" != "--rebuild" ]; then
+    echo "(The new version is committed and tagged here; 'git push --follow-tags' publishes it.)"
+fi
