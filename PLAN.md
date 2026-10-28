@@ -34,6 +34,8 @@ Add Hardware (device types)
 - Character devices: Serial, Console, Channel
 
 VM management
+- No permanent sidebar: clicking the window title ("Virtual Machines") opens a menu to switch between Virtual Machines, Host overview, Virtual networks and Storage pools, and between connections (system / user session), so the VM list gets the full window
+- The VM list shows a modern-looking logo for each VM, matching its guest OS (for example Fedora, Ubuntu, Windows), with a clean generic icon when the OS is unknown
 - Run, pause, shut down, reboot, force off, save, delete, and optionally delete the VM's storage
 - Clone VMs
 - Take, restore and manage snapshots
@@ -63,6 +65,20 @@ Preferences
 
 Other features
 - It should work with qemu-guest-agent in a guest os.
+- Follow the system theme: light/dark mode and the system accent color are applied automatically, and custom GTK themes installed on the system must work too
+- A compact host summary (CPU usage, memory used / total and by running VMs, default storage pool free space) is always visible below the VM list; clicking it opens the Host overview
+- Colors (agreed design rules):
+  - No own color scheme: all colors come from the active GTK theme (custom themes included)
+  - Mostly neutral surfaces; the accent color is only used for the selected item, the one primary button per screen, and switches that are on
+  - Status colors always mean the same: green = running, yellow = paused/warning, red = error/destructive, gray = shut off; always paired with a word or icon
+  - OS logos are the main color in the VM list
+  - Graphs use fixed colors everywhere: CPU = accent, memory = green, disk = orange, network = purple
+  - Text must meet contrast requirements in light, dark, high-contrast and custom themes
+- Usually fewer than 10 VMs (max ~10). The main window shows the VMs as a list; clicking a VM shows its details (console preview, controls, resources, storage used per disk, guest agent info) in a panel next to the list
+
+Packaging / installation
+- Build an RPM from the source code inside the toolbox container, so the app can be installed on the host with a single command (`sudo dnf install ./<package>.rpm`) and removed cleanly with dnf
+- The RPM installs the app with its menu entry and icon so it shows up in the GNOME app grid, and pulls in its runtime dependencies (GTK4, libadwaita, libvirt, libosinfo, osinfo-db, …) automatically
 
 ## Autonomy 
 I don't know rust, so don't ask me about programming decisions, only ask me about features and when something needs to be tested. If you really need to ask something about rust or programming then explain it to me in easy to understand language so that with that information I can give you a good answer to help reach the end result software that I want to create.
