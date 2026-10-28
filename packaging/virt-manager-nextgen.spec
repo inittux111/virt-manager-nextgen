@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.1.4
+Version:        0.1.5
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -89,6 +89,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Wed Oct 28 2026 Maarten van der Rijst <github@feedmebits.nl> - 0.1.5-1
+- Add tpm_check and a wizard installer-image test hook
+
 * Wed Oct 28 2026 Maarten van der Rijst <github@feedmebits.nl> - 0.1.4-1
 - Let machines use a specific UEFI firmware file
 
