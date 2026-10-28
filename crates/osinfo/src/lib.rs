@@ -12,6 +12,18 @@ use std::ffi::{CStr, CString};
 use std::fmt;
 use std::ptr::{self, NonNull};
 
+/// Hardware needs of an OS on one architecture. Missing values are `None`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Resources {
+    /// CPU architecture (`x86_64`, `aarch64`, …) or `all`.
+    pub arch: String,
+    pub cpus: Option<u32>,
+    /// Memory in bytes.
+    pub ram: Option<u64>,
+    /// Disk size in bytes.
+    pub storage: Option<u64>,
+}
+
 /// A guest operating system known to osinfo-db.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OsInfo {
@@ -33,6 +45,33 @@ pub struct OsInfo {
     pub release_date: Option<String>,
     /// End-of-life date (`YYYY-MM-DD`), if known.
     pub eol_date: Option<String>,
+    pub minimum: Vec<Resources>,
+    pub recommended: Vec<Resources>,
+}
+
+impl OsInfo {
+    /// Recommended resources for `arch`, filled in from the minimum and
+    /// from `all`-architecture entries where values are missing.
+    pub fn resources_for(&self, arch: &str) -> Resources {
+        let pick = |list: &[Resources]| {
+            let exact = list.iter().find(|r| r.arch == arch);
+            let all = list.iter().find(|r| r.arch == "all");
+            Resources {
+                arch: arch.to_owned(),
+                cpus: exact.and_then(|r| r.cpus).or(all.and_then(|r| r.cpus)),
+                ram: exact.and_then(|r| r.ram).or(all.and_then(|r| r.ram)),
+                storage: exact.and_then(|r| r.storage).or(all.and_then(|r| r.storage)),
+            }
+        };
+        let rec = pick(&self.recommended);
+        let min = pick(&self.minimum);
+        Resources {
+            arch: arch.to_owned(),
+            cpus: rec.cpus.or(min.cpus),
+            ram: rec.ram.or(min.ram),
+            storage: rec.storage.or(min.storage),
+        }
+    }
 }
 
 /// Errors from libosinfo.
@@ -174,8 +213,40 @@ fn os_info(os: *mut ffi::OsinfoOs) -> OsInfo {
             distro: opt_str(ffi::osinfo_os_get_distro(os)),
             release_date: opt_str(ffi::osinfo_product_get_release_date_string(product)),
             eol_date: opt_str(ffi::osinfo_product_get_eol_date_string(product)),
+            minimum: resources(ffi::osinfo_os_get_minimum_resources(os)),
+            recommended: resources(ffi::osinfo_os_get_recommended_resources(os)),
         }
     }
+}
+
+/// Reads and frees a resources list (transfer full).
+///
+/// # Safety
+/// `list` must be NULL or a valid `OsinfoResourcesList` owned by the caller.
+unsafe fn resources(list: *mut ffi::OsinfoResourcesList) -> Vec<Resources> {
+    if list.is_null() {
+        return Vec::new();
+    }
+    let l = list.cast::<ffi::OsinfoList>();
+    let positive = |v: i64| u64::try_from(v).ok().filter(|&v| v > 0);
+    // SAFETY: `l` is a valid list; entries are OsinfoResources (borrowed).
+    let out = unsafe {
+        (0..ffi::osinfo_list_get_length(l).max(0))
+            .filter_map(|i| NonNull::new(ffi::osinfo_list_get_nth(l, i)))
+            .map(|e| {
+                let r = e.as_ptr().cast::<ffi::OsinfoResources>();
+                Resources {
+                    arch: opt_str(ffi::osinfo_resources_get_architecture(r)).unwrap_or_else(|| "all".into()),
+                    cpus: u32::try_from(ffi::osinfo_resources_get_n_cpus(r)).ok().filter(|&c| c > 0),
+                    ram: positive(ffi::osinfo_resources_get_ram(r)),
+                    storage: positive(ffi::osinfo_resources_get_storage(r)),
+                }
+            })
+            .collect()
+    };
+    // SAFETY: we own the list reference.
+    unsafe { ffi::g_object_unref(list.cast()) };
+    out
 }
 
 /// # Safety
@@ -214,6 +285,9 @@ mod tests {
         assert!(os.name.contains("Fedora"));
         assert!(db.all().len() > 100);
         assert!(db.os("http://example.invalid/none").is_none());
+        let r = os.resources_for("x86_64");
+        assert!(r.ram.unwrap_or(0) >= 1 << 30, "{r:?}");
+        assert!(r.storage.is_some());
     }
 
     #[test]

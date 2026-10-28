@@ -119,3 +119,31 @@ sparkline.inactive { color: alpha(currentColor, 0.25); }
   color: var(--accent-color);
   background-color: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
 }
+
+/* ── New VM wizard ───────────────────────────────────────────────────── */
+
+.wizard-page { padding: 24px 28px; }
+.wizard-footer { padding: 10px 14px; }
+.step-indicator { margin: 0 12px; }
+.step .step-number {
+  min-width: 22px;
+  min-height: 22px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  font-weight: 700;
+  background-color: color-mix(in srgb, currentColor 10%, transparent);
+}
+.step .step-label { font-size: 0.9em; opacity: var(--dim-opacity, 0.55); }
+.step.current .step-number { background-color: var(--accent-bg-color); color: var(--accent-fg-color); }
+.step.current .step-label { font-weight: 700; opacity: 1; }
+.step.done .step-number { color: var(--accent-color); background-color: color-mix(in srgb, var(--accent-bg-color) 16%, transparent); }
+.step-connector { min-width: 18px; min-height: 1px; background-color: var(--border-color); }
+
+.method-card { padding: 16px; border-radius: 12px; }
+.method-card:checked {
+  background-color: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent-bg-color);
+  color: inherit;
+}
+.method-card:checked .method-icon { color: var(--accent-color); }
+.os-card { padding: 12px 14px; }
