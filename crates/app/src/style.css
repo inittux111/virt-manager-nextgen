@@ -178,3 +178,14 @@ guest-screen:focus-visible { outline: none; }
 .console-toolbar separator { margin: 6px 4px; }
 .console-caption { padding: 4px 10px; border-radius: 8px; }
 .console-terminal { padding: 64px 12px 12px 12px; }
+
+/* ── Host overview ───────────────────────────────────────────────────── */
+
+.host-card { padding: 16px 18px; }
+.host-icon {
+  min-width: 52px;
+  min-height: 52px;
+  border-radius: 12px;
+  color: var(--accent-color);
+  background-color: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
+}

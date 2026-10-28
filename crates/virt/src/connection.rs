@@ -175,8 +175,8 @@ impl Connection {
     }
 
     /// Counters of every domain.
-    pub fn domain_stats(&self) -> Result<Vec<DomainStats>> {
-        stats::all_domain_stats(&self.conn)
+    pub fn domain_stats(&self, wanted: stats::StatsWanted) -> Result<Vec<DomainStats>> {
+        stats::all_domain_stats(&self.conn, wanted)
     }
 
     /// Host CPU and memory counters.

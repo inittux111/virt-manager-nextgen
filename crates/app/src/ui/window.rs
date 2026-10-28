@@ -52,6 +52,8 @@ struct State {
     /// A VM whose console opens once it shows as running ("open the
     /// console when a machine starts").
     pending_console: Option<String>,
+    /// Whether hardware virtualization is available on the host.
+    kvm: Option<bool>,
 }
 
 pub struct MainWindow {
@@ -70,6 +72,11 @@ pub struct MainWindow {
     nav: adw::NavigationView,
     vm_page: VmPage,
     console: Rc<super::console::ConsolePage>,
+    host_view: Rc<super::host_view::HostView>,
+    networks_view: Rc<super::networks_view::NetworksView>,
+    storage_view: Rc<super::storage_view::StorageView>,
+    new_button: gtk::Button,
+    new_label: adw::ButtonContent,
     actions: VmActions,
     job: JobBar,
     search_bar: gtk::SearchBar,
@@ -81,10 +88,6 @@ impl std::fmt::Debug for MainWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MainWindow").finish_non_exhaustive()
     }
-}
-
-fn placeholder_page(view: View, text: &str) -> adw::StatusPage {
-    adw::StatusPage::builder().icon_name(view.icon()).title(view.title()).description(text).build()
 }
 
 impl MainWindow {
@@ -118,11 +121,16 @@ impl MainWindow {
             .build();
         header.pack_end(&menu_button);
 
-        let new_vm = super::widgets::labeled_button("list-add-symbolic", "New VM");
-        new_vm.add_css_class("suggested-action");
-        new_vm.set_action_name(Some("win.new-vm"));
-        new_vm.set_tooltip_text(Some("Create a virtual machine"));
-        header.pack_end(&new_vm);
+        // The view's main action: New VM, New Network, … (one per view).
+        let new_label = adw::ButtonContent::builder().icon_name("list-add-symbolic").label("New VM").build();
+        let new_button = gtk::Button::builder()
+            .child(&new_label)
+            .valign(gtk::Align::Center)
+            .css_classes(["suggested-action"])
+            .build();
+        new_button.set_action_name(Some("win.new-vm"));
+        new_button.set_tooltip_text(Some("Create a virtual machine"));
+        header.pack_end(&new_button);
 
         let search_button =
             gtk::ToggleButton::builder().icon_name("system-search-symbolic").tooltip_text("Search machines").build();
@@ -196,18 +204,8 @@ impl MainWindow {
 
         let views = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).vexpand(true).build();
         views.add_named(&machines, Some(View::Machines.id()));
-        views.add_named(
-            &placeholder_page(View::Host, "Detailed host usage arrives in a later update."),
-            Some(View::Host.id()),
-        );
-        views.add_named(
-            &placeholder_page(View::Networks, "Creating and managing virtual networks arrives in a later update."),
-            Some(View::Networks.id()),
-        );
-        views.add_named(
-            &placeholder_page(View::Storage, "Browsing and managing storage pools arrives in a later update."),
-            Some(View::Storage.id()),
-        );
+        let host_view = super::host_view::HostView::new();
+        views.add_named(&host_view.root, Some(View::Host.id()));
 
         let banner = adw::Banner::builder().button_label("Retry Now").build();
         let job = JobBar::new();
@@ -224,6 +222,10 @@ impl MainWindow {
 
         let toasts = adw::ToastOverlay::new();
         let feedback = Feedback::new(&toasts, &window);
+        let networks_view = super::networks_view::NetworksView::new(feedback.clone());
+        views.add_named(&networks_view.root, Some(View::Networks.id()));
+        let storage_view = super::storage_view::StorageView::new(feedback.clone());
+        views.add_named(&storage_view.root, Some(View::Storage.id()));
         let nav = adw::NavigationView::new();
         nav.add(&main_page);
         toasts.set_child(Some(&nav));
@@ -268,6 +270,11 @@ impl MainWindow {
             nav,
             vm_page,
             console,
+            host_view,
+            networks_view,
+            storage_view,
+            new_button,
+            new_label,
             actions,
             job,
             search_bar,
@@ -286,6 +293,7 @@ impl MainWindow {
                 pending_select: None,
                 pending_page: None,
                 pending_console: None,
+                kvm: None,
             }),
         });
 
@@ -313,6 +321,33 @@ impl MainWindow {
     }
 
     fn setup_actions(self: &Rc<Self>) {
+        #[cfg(debug_assertions)]
+        {
+            let dev_view = gio::SimpleAction::new("dev-view", Some(glib::VariantTy::STRING));
+            let weak = Rc::downgrade(self);
+            dev_view.connect_activate(move |_, p| {
+                let (Some(this), Some(id)) = (weak.upgrade(), p.and_then(|v| v.get::<String>())) else { return };
+                if let Some(v) = View::ALL.into_iter().find(|v| v.id() == id) {
+                    this.set_view(v);
+                }
+            });
+            self.window.add_action(&dev_view);
+        }
+        let new_network = gio::SimpleAction::new("new-network", None);
+        let weak = Rc::downgrade(self);
+        new_network.connect_activate(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.networks_view.new_network(&this.window);
+            }
+        });
+        self.window.add_action(&new_network);
+        let weak = Rc::downgrade(self);
+        self.host_view.connect_open_vm(move |uuid| {
+            if let Some(this) = weak.upgrade() {
+                this.set_view(View::Machines);
+                this.vm_list.select(uuid);
+            }
+        });
         for (name, import) in [("new-vm", false), ("import-disk", true)] {
             let a = gio::SimpleAction::new(name, None);
             let weak = Rc::downgrade(self);
@@ -427,14 +462,44 @@ impl MainWindow {
         });
     }
 
-    fn set_view(&self, view: View) {
+    fn set_view(self: &Rc<Self>, view: View) {
         self.state.borrow_mut().view = view;
         self.views.set_visible_child_name(view.id());
+        // The header's main button follows the view.
+        let (label, action, tooltip) = match view {
+            View::Machines => (Some("New VM"), "win.new-vm", "Create a virtual machine"),
+            View::Networks => (Some("New Network"), "win.new-network", "Create a virtual network"),
+            _ => (None, "win.new-vm", ""),
+        };
+        self.new_button.set_visible(label.is_some());
+        if let Some(label) = label {
+            self.new_label.set_label(label);
+            self.new_button.set_action_name(Some(action));
+            self.new_button.set_tooltip_text(Some(tooltip));
+        }
+        self.load_view(view);
         self.search_button.set_visible(view == View::Machines);
         if view != View::Machines {
             self.search_bar.set_search_mode(false);
         }
         self.update_chrome();
+    }
+
+    /// Loads the data a view shows when it becomes visible.
+    fn load_view(self: &Rc<Self>, view: View) {
+        let Some(conn) = self.current_conn() else { return };
+        let domains = self.state.borrow().domains.clone();
+        match view {
+            View::Networks => self.networks_view.load(conn, &domains),
+            View::Storage => self.storage_view.load(conn, &domains),
+            View::Host => self.update_host_view(),
+            View::Machines => {}
+        }
+    }
+
+    fn update_host_view(&self) {
+        let st = self.state.borrow();
+        self.host_view.update(st.host_info.as_ref(), st.kvm, st.current.uri(), &st.monitor, &st.domains);
     }
 
     fn status_of(&self, kind: &ConnectionKind) -> ConnStatus {
@@ -530,6 +595,12 @@ impl MainWindow {
         if let Ok(info) = conn.call(|c| c.host_info()).await {
             self.state.borrow_mut().host_info = Some(info);
         }
+        if let Ok(caps) = conn.call(|c| c.host_caps()).await {
+            let kvm = caps.guest(&caps.host_arch).is_some_and(|g| g.kvm);
+            self.state.borrow_mut().kvm = Some(kvm);
+        }
+        let view = self.state.borrow().view;
+        self.load_view(view);
         self.refresh();
     }
 
@@ -585,14 +656,18 @@ impl MainWindow {
             st.tick += 1;
         }
         let kind = conn.kind().clone();
+        let prefs = self.settings.get();
+        let wanted =
+            vmng_virt::StatsWanted { cpu: prefs.stats_cpu, memory: prefs.stats_memory, network: prefs.stats_network };
+        self.details.set_collect([prefs.stats_cpu, prefs.stats_memory, prefs.stats_disk, prefs.stats_network]);
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let result = conn
-                .call(|c| {
+                .call(move |c| {
                     Ok(Sample {
                         at: Instant::now(),
                         domains: c.list_domains()?,
-                        stats: c.domain_stats()?,
+                        stats: c.domain_stats(wanted)?,
                         host: c.host_stats()?,
                         pool: c.pool_summary("default").ok().flatten(),
                     })
@@ -629,6 +704,9 @@ impl MainWindow {
         };
         let domains = self.state.borrow().domains.clone();
         self.vm_list.update(&domains);
+        if self.state.borrow().view == View::Host {
+            self.update_host_view();
+        }
         {
             let st = self.state.borrow();
             self.vm_list.update_host(st.host_info.as_ref(), st.monitor.host());
@@ -839,6 +917,12 @@ impl MainWindow {
                 self.vm_list.select(&uuid);
             }
         }
+        if let Ok(view) = std::env::var("VMNG_DEV_VIEW") {
+            let view = super::title_menu::View::ALL.into_iter().find(|v| v.id() == view);
+            if let Some(view) = view {
+                self.set_view_later(view);
+            }
+        }
         if let Ok(action) = std::env::var("VMNG_DEV_ACTION") {
             let window = self.window.clone();
             glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
@@ -879,6 +963,12 @@ impl MainWindow {
                 this.refresh();
             }
         });
+    }
+
+    #[cfg(debug_assertions)]
+    fn set_view_later(&self, view: View) {
+        // Called from a &self context; the window keeps an Rc via the actions.
+        let _ = WidgetExt::activate_action(&self.window, "win.dev-view", Some(&view.id().to_variant()));
     }
 
     fn vm_by_uuid(&self, uuid: &str) -> Option<DomainSummary> {

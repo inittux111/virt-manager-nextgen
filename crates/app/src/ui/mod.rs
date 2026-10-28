@@ -3,9 +3,13 @@
 mod console;
 mod feedback;
 mod hardware;
+mod host_view;
+mod networks_view;
 mod new_vm;
 mod os_chooser;
+pub mod preferences;
 mod snapshots;
+mod storage_view;
 mod title_menu;
 mod vm_actions;
 mod vm_details;

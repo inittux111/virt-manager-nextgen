@@ -26,6 +26,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   {} usage {:?}", disk.target, conn.disk_usage(&d.uuid, &disk.target));
         }
     }
-    println!("{:#?}", conn.domain_stats()?);
+    println!("{:#?}", conn.domain_stats(Default::default())?);
     Ok(())
 }
