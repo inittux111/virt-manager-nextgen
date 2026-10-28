@@ -51,6 +51,8 @@ pub struct VmList {
     pub root: adw::Clamp,
     list: gtk::ListBox,
     summary: gtk::Label,
+    /// The connection's name, shown before the counts.
+    connection: RefCell<String>,
     rows: RefCell<Vec<(String, Rc<Row>)>>,
     by_row: RefCell<HashMap<gtk::ListBoxRow, String>>,
     filter: Rc<RefCell<String>>,
@@ -103,6 +105,7 @@ impl VmList {
             root,
             list,
             summary,
+            connection: RefCell::default(),
             rows: RefCell::default(),
             by_row: RefCell::default(),
             filter: Rc::default(),
@@ -144,6 +147,19 @@ impl VmList {
 
     pub fn connect_selected(&self, f: impl Fn(Option<&str>) + 'static) {
         self.on_select.replace(Some(Rc::new(f)));
+    }
+
+    /// Names the connection above the list (e.g. "QEMU/KVM · System").
+    pub fn set_connection(&self, name: &str) {
+        if *self.connection.borrow() != name {
+            self.connection.replace(name.to_owned());
+            let text = self.summary.label();
+            let counts = text
+                .split_once(" · ")
+                .filter(|(first, _)| first.starts_with("QEMU"))
+                .map_or(text.as_str(), |(_, rest)| rest);
+            self.summary.set_label(&if counts.is_empty() { name.to_owned() } else { format!("{name} · {counts}") });
+        }
     }
 
     /// Called with a VM's UUID when it is double-clicked.
@@ -382,6 +398,10 @@ impl VmList {
         }
         if off > 0 {
             parts.push(format!("{off} shut off"));
+        }
+        let connection = self.connection.borrow();
+        if !connection.is_empty() {
+            parts.insert(0, connection.clone());
         }
         self.summary.set_label(&parts.join(" · "));
         self.list.invalidate_filter();

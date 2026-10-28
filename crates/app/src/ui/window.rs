@@ -90,7 +90,7 @@ pub struct MainWindow {
     pub window: adw::ApplicationWindow,
     settings: Settings,
     title_menu: TitleMenu,
-    views: gtk::Stack,
+    views: adw::ViewStack,
     machines: gtk::Stack,
     error_page: adw::StatusPage,
     loading_label: gtk::Label,
@@ -109,7 +109,6 @@ pub struct MainWindow {
     storage_view: Rc<super::storage_view::StorageView>,
     new_button: gtk::Button,
     new_wrap: gtk::Box,
-    new_label: adw::ButtonContent,
     tray: RefCell<Option<crate::tray::Tray>>,
     actions: VmActions,
     job: JobBar,
@@ -180,12 +179,20 @@ impl MainWindow {
         }
 
         // Header.
+        // (The title menu's state still drives the chrome; it is no longer
+        // shown: views are header tabs, connections are in the main menu.)
         let title_menu = TitleMenu::new();
-        let header = adw::HeaderBar::builder().title_widget(&gtk::Box::new(gtk::Orientation::Horizontal, 0)).build();
-        header.pack_start(&title_menu.button);
+        let views = adw::ViewStack::builder().hhomogeneous(false).vexpand(true).enable_transitions(true).build();
+        let switcher = adw::ViewSwitcher::builder().stack(&views).policy(adw::ViewSwitcherPolicy::Wide).build();
+        let header = adw::HeaderBar::builder().title_widget(&switcher).build();
+        let switcher_bar = adw::ViewSwitcherBar::builder().stack(&views).build();
 
         let main_menu = gio::Menu::new();
         let section = gio::Menu::new();
+        let conns = gio::Menu::new();
+        conns.append(Some("QEMU/KVM · System"), Some("win.connection::system"));
+        conns.append(Some("QEMU/KVM · User Session"), Some("win.connection::session"));
+        main_menu.append_section(Some("Connection"), &conns);
         section.append(Some("Preferences"), Some("app.preferences"));
         section.append(Some("Keyboard Shortcuts"), Some("app.shortcuts"));
         section.append(Some("About Virtual Machines"), Some("app.about"));
@@ -198,35 +205,31 @@ impl MainWindow {
             .build();
         header.pack_end(&menu_button);
 
-        // The view's main action: New VM, New Network, … (one per view).
-        let new_label = adw::ButtonContent::builder().icon_name("list-add-symbolic").label("New VM").build();
-        let new_button = gtk::Button::builder()
-            .child(&new_label)
-            .valign(gtk::Align::Center)
-            .css_classes(["suggested-action"])
-            .build();
+        // The view's main action (New VM, New Network): a plain "+" at the
+        // start, as in GNOME's own apps.
+        let new_button = gtk::Button::builder().icon_name("list-add-symbolic").valign(gtk::Align::Center).build();
         new_button.set_action_name(Some("win.new-vm"));
         new_button.set_tooltip_text(Some("Create a virtual machine"));
-        // Narrow windows show the same button without its label.
-        let new_icon = gtk::Button::builder()
-            .icon_name("list-add-symbolic")
-            .valign(gtk::Align::Center)
-            .css_classes(["suggested-action"])
-            .visible(false)
-            .build();
-        new_button.bind_property("action-name", &new_icon, "action-name").sync_create().build();
-        new_button.bind_property("tooltip-text", &new_icon, "tooltip-text").sync_create().build();
         let new_wrap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         new_wrap.append(&new_button);
-        new_wrap.append(&new_icon);
-        header.pack_end(&new_wrap);
+        header.pack_start(&new_wrap);
+        // Narrow windows: the view tabs move to a bar at the bottom.
+        let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            760.0,
+            adw::LengthUnit::Px,
+        ));
+        narrow.add_setter(&switcher, "visible", Some(&false.to_value()));
+        narrow.add_setter(&switcher_bar, "reveal", Some(&true.to_value()));
+        // Very narrow: also drop the search button. (Only one breakpoint
+        // applies at a time, so it repeats the narrow setters.)
         let compact = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
             adw::BreakpointConditionLengthType::MaxWidth,
             560.0,
             adw::LengthUnit::Px,
         ));
-        compact.add_setter(&new_button, "visible", Some(&false.to_value()));
-        compact.add_setter(&new_icon, "visible", Some(&true.to_value()));
+        compact.add_setter(&switcher, "visible", Some(&false.to_value()));
+        compact.add_setter(&switcher_bar, "reveal", Some(&true.to_value()));
 
         let search_button =
             gtk::ToggleButton::builder().icon_name("system-search-symbolic").tooltip_text("Search machines").build();
@@ -235,6 +238,7 @@ impl MainWindow {
         search_wrap.append(&search_button);
         header.pack_end(&search_wrap);
         compact.add_setter(&search_wrap, "visible", Some(&false.to_value()));
+        window.add_breakpoint(narrow);
         window.add_breakpoint(compact);
 
         let search_entry = gtk::SearchEntry::builder().placeholder_text("Search machines").build();
@@ -304,14 +308,12 @@ impl MainWindow {
         machines.add_named(&empty, Some("empty"));
         machines.add_named(split.root(), Some("content"));
 
-        let views = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
-            .hhomogeneous(false)
-            .vexpand(true)
-            .build();
-        views.add_named(&machines, Some(View::Machines.id()));
+        let tab = |view: View, child: &gtk::Widget| {
+            views.add_titled_with_icon(child, Some(view.id()), view.tab_title(), view.icon());
+        };
+        tab(View::Machines, machines.upcast_ref());
         let host_view = super::host_view::HostView::new();
-        views.add_named(&host_view.root, Some(View::Host.id()));
+        tab(View::Host, host_view.root.upcast_ref());
 
         let banner = adw::Banner::builder().button_label("Retry Now").build();
         let job = JobBar::new();
@@ -323,15 +325,16 @@ impl MainWindow {
 
         let toolbar = adw::ToolbarView::builder().content(&body).build();
         toolbar.add_top_bar(&header);
+        toolbar.add_bottom_bar(&switcher_bar);
         let main_page =
             adw::NavigationPage::builder().tag("main").title(crate::config::APP_NAME).child(&toolbar).build();
 
         let toasts = adw::ToastOverlay::new();
         let feedback = Feedback::new(&toasts, &window);
         let networks_view = super::networks_view::NetworksView::new(feedback.clone());
-        views.add_named(&networks_view.root, Some(View::Networks.id()));
+        tab(View::Networks, networks_view.root.upcast_ref());
         let storage_view = super::storage_view::StorageView::new(feedback.clone());
-        views.add_named(&storage_view.root, Some(View::Storage.id()));
+        tab(View::Storage, storage_view.root.upcast_ref());
         let nav = adw::NavigationView::new();
         nav.add(&main_page);
         toasts.set_child(Some(&nav));
@@ -380,7 +383,6 @@ impl MainWindow {
             storage_view,
             new_button,
             new_wrap,
-            new_label,
             tray: RefCell::default(),
             actions,
             job,
@@ -450,6 +452,31 @@ impl MainWindow {
     }
 
     fn setup_actions(self: &Rc<Self>) {
+        // The header tabs: follow the person's choice.
+        let weak = Rc::downgrade(self);
+        self.views.connect_visible_child_name_notify(move |stack| {
+            let Some(this) = weak.upgrade() else { return };
+            let picked = stack.visible_child_name().and_then(|n| View::ALL.into_iter().find(|v| v.id() == n));
+            if let Some(view) = picked
+                && this.state.borrow().view != view
+            {
+                this.set_view(view);
+            }
+        });
+        // `win.connection::system|session` (main menu) switches connection.
+        let current = match self.state.borrow().current {
+            ConnectionKind::Session => "session",
+            _ => "system",
+        };
+        let conn = gio::SimpleAction::new_stateful("connection", Some(glib::VariantTy::STRING), &current.to_variant());
+        let weak = Rc::downgrade(self);
+        conn.connect_activate(move |a, p| {
+            let (Some(this), Some(id)) = (weak.upgrade(), p.and_then(|v| v.get::<String>())) else { return };
+            a.set_state(&id.to_variant());
+            let kind = if id == "session" { ConnectionKind::Session } else { ConnectionKind::System };
+            this.switch_connection(kind);
+        });
+        self.window.add_action(&conn);
         // `win.view::<id>` switches views (Ctrl+1…4).
         let view = gio::SimpleAction::new("view", Some(glib::VariantTy::STRING));
         let weak = Rc::downgrade(self);
@@ -611,8 +638,7 @@ impl MainWindow {
             _ => (None, "win.new-vm", ""),
         };
         self.new_wrap.set_visible(label.is_some());
-        if let Some(label) = label {
-            self.new_label.set_label(label);
+        if label.is_some() {
             self.new_button.set_action_name(Some(action));
             self.new_button.set_tooltip_text(Some(tooltip));
         }
@@ -673,6 +699,11 @@ impl MainWindow {
         };
         let status = self.status_of(&current);
         self.title_menu.set_current(view, &current, status);
+        self.vm_list.set_connection(&format!("QEMU/KVM · {}", connection_name(&current)));
+        if let Some(a) = self.window.lookup_action("connection").and_downcast::<gio::SimpleAction>() {
+            let id = if current == ConnectionKind::Session { "session" } else { "system" };
+            a.set_state(&id.to_variant());
+        }
         for kind in super::title_menu::CONNECTIONS {
             self.title_menu.set_connection_status(&kind, self.status_of(&kind));
         }
