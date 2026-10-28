@@ -12,6 +12,8 @@ mod config;
 mod connection;
 mod domain;
 mod error;
+mod manage;
+mod snapshot;
 mod stats;
 pub mod units;
 
@@ -19,6 +21,8 @@ pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceCo
 pub use connection::{Connection, ConnectionKind, GuestDetails, HostInfo, PoolSummary};
 pub use domain::{DomainState, DomainSummary, PowerAction};
 pub use error::{Error, Result};
+pub use manage::{CloneDiskMode, unique_name, validate_vm_name};
+pub use snapshot::{SnapshotInfo, SnapshotLocation, validate_snapshot_name};
 pub use stats::{BlockStats, DomainStats, HostStats, NetStats};
 
 /// Silences libvirt's default behaviour of printing every error to stderr.

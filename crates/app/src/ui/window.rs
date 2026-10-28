@@ -3,16 +3,24 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use vmng_virt::{ConnectionKind, DomainSummary, GuestDetails, HostInfo, PowerAction};
+use vmng_virt::{CloneDiskMode, ConnectionKind, DomainSummary, GuestDetails, HostInfo, PowerAction};
 
+use super::feedback::Feedback;
+use super::snapshots::{SnapshotsView, take_snapshot_dialog};
 use super::title_menu::{ConnStatus, TitleMenu, View, connection_name};
+use super::vm_actions::{VmAction, VmActions};
 use super::vm_details::VmDetails;
+use super::vm_dialogs::{clone_dialog, delete_dialog, rename_dialog};
 use super::vm_list::VmList;
+use super::vm_page::{VmPage, VmTab};
 use crate::backend::{Conn, Monitor, Sample};
+use crate::format;
 use crate::settings::Settings;
 
 /// Guest agent details are refreshed every this many polls.
@@ -37,6 +45,8 @@ struct State {
     polling: bool,
     tick: u64,
     timer: Option<glib::SourceId>,
+    /// A VM to select once it appears in the list (e.g. a new clone).
+    pending_select: Option<String>,
 }
 
 pub struct MainWindow {
@@ -51,7 +61,11 @@ pub struct MainWindow {
     vm_list: Rc<VmList>,
     details: Rc<VmDetails>,
     banner: adw::Banner,
-    toasts: adw::ToastOverlay,
+    feedback: Feedback,
+    nav: adw::NavigationView,
+    vm_page: VmPage,
+    actions: VmActions,
+    job: JobBar,
     search_bar: gtk::SearchBar,
     search_button: gtk::ToggleButton,
     state: RefCell<State>,
@@ -190,18 +204,40 @@ impl MainWindow {
         );
 
         let banner = adw::Banner::builder().button_label("Retry Now").build();
+        let job = JobBar::new();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.append(&banner);
         body.append(&search_bar);
         body.append(&views);
-        let toasts = adw::ToastOverlay::new();
-        toasts.set_child(Some(&body));
+        body.append(&job.revealer);
 
-        let toolbar = adw::ToolbarView::builder().content(&toasts).build();
+        let toolbar = adw::ToolbarView::builder().content(&body).build();
         toolbar.add_top_bar(&header);
-        window.set_content(Some(&toolbar));
+        let main_page =
+            adw::NavigationPage::builder().tag("main").title(crate::config::APP_NAME).child(&toolbar).build();
+
+        let toasts = adw::ToastOverlay::new();
+        let feedback = Feedback::new(&toasts, &window);
+        let nav = adw::NavigationView::new();
+        nav.add(&main_page);
+        toasts.set_child(Some(&nav));
+        window.set_content(Some(&toasts));
+
+        let actions = VmActions::new();
+        window.insert_action_group("vm", Some(&actions.group));
 
         let current = ConnectionKind::from_uri(&prefs.last_connection);
+        // The snapshots view reports changes back through a weak reference
+        // that is filled in once the window exists.
+        let me: Rc<RefCell<Weak<Self>>> = Rc::default();
+        let m = me.clone();
+        let snapshots = SnapshotsView::new(feedback.clone(), move || {
+            if let Some(this) = m.borrow().upgrade() {
+                this.refresh();
+            }
+        });
+        let vm_page = VmPage::new(snapshots);
+        nav.add(&vm_page.page);
         let this = Rc::new(Self {
             window,
             settings,
@@ -214,7 +250,11 @@ impl MainWindow {
             vm_list,
             details,
             banner,
-            toasts,
+            feedback,
+            nav,
+            vm_page,
+            actions,
+            job,
             search_bar,
             search_button,
             state: RefCell::new(State {
@@ -228,9 +268,11 @@ impl MainWindow {
                 polling: false,
                 tick: 0,
                 timer: None,
+                pending_select: None,
             }),
         });
 
+        me.replace(Rc::downgrade(&this));
         this.setup_actions();
         this.wire(&search_entry, &retry);
         this.update_chrome();
@@ -306,8 +348,20 @@ impl MainWindow {
                 this.request_power(uuid.to_owned(), action);
             }
         };
-        self.vm_list.connect_action(on_action.clone());
-        self.details.connect_action(on_action);
+        self.vm_list.connect_action(on_action);
+        let weak = Rc::downgrade(self);
+        self.actions.connect(move |uuid, action| {
+            if let Some(this) = weak.upgrade() {
+                this.vm_action(uuid.to_owned(), action);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.nav.connect_visible_page_notify(move |_| {
+            if let Some(this) = weak.upgrade() {
+                let selected = this.vm_list.selected();
+                this.show_selected(selected.as_deref());
+            }
+        });
         let weak = Rc::downgrade(self);
         self.details.connect_autostart(move |uuid, on| {
             if let Some(this) = weak.upgrade() {
@@ -366,7 +420,10 @@ impl MainWindow {
     }
 
     fn current_conn(&self) -> Option<Conn> {
-        let st = self.state.borrow();
+        self.current_conn_in(&self.state.borrow())
+    }
+
+    fn current_conn_in(&self, st: &State) -> Option<Conn> {
         match st.conns.get(&st.current) {
             Some(Slot::Connected(c)) => Some(c.clone()),
             _ => None,
@@ -462,6 +519,7 @@ impl MainWindow {
             st.host_info = None;
         }
         self.settings.update(|p| p.last_connection = kind.uri().to_owned());
+        self.nav.pop_to_tag("main");
         self.machines.set_visible_child_name("loading");
         self.vm_list.update(&[]);
         self.update_chrome();
@@ -552,7 +610,15 @@ impl MainWindow {
             self.machines.set_visible_child_name("empty");
         } else {
             self.machines.set_visible_child_name("content");
+            let pending = self.state.borrow_mut().pending_select.take();
+            if let Some(uuid) = pending {
+                self.vm_list.select(&uuid);
+            }
             self.vm_list.ensure_selection();
+        }
+        #[cfg(debug_assertions)]
+        if tick == 1 {
+            self.dev_hooks();
         }
         let selected = self.vm_list.selected();
         self.show_selected(selected.as_deref());
@@ -566,13 +632,30 @@ impl MainWindow {
 
     fn show_selected(&self, uuid: Option<&str>) {
         let st = self.state.borrow();
-        match uuid.and_then(|u| st.domains.iter().find(|d| d.uuid == u)) {
+        let vm = uuid.and_then(|u| st.domains.iter().find(|d| d.uuid == u));
+        self.actions.set_target(vm);
+        match vm {
             Some(d) => {
                 self.details.show(d, st.monitor.vm(&d.uuid), st.guest.get(&d.uuid));
                 self.content.set_visible_child_name("details");
+                if self.vm_page_open()
+                    && let Some(conn) = self.current_conn_in(&st)
+                {
+                    self.vm_page.show(conn, d);
+                }
             }
-            None => self.content.set_visible_child_name("none"),
+            None => {
+                self.content.set_visible_child_name("none");
+                if self.vm_page_open() {
+                    // The VM went away (deleted elsewhere).
+                    self.nav.pop_to_tag("main");
+                }
+            }
         }
+    }
+
+    fn vm_page_open(&self) -> bool {
+        self.nav.visible_page().and_then(|p| p.tag()).is_some_and(|t| t == VmPage::TAG)
     }
 
     /// Asks the guest (agent) for its hostname and addresses.
@@ -660,7 +743,7 @@ impl MainWindow {
             let result = conn.call(move |c| c.power(&uuid, action)).await;
             let Some(this) = weak.upgrade() else { return };
             if let Err(e) = result {
-                this.show_error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message());
+                this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message());
             }
             this.refresh();
         });
@@ -673,23 +756,265 @@ impl MainWindow {
             let result = conn.call(move |c| c.set_autostart(&uuid, on)).await;
             let Some(this) = weak.upgrade() else { return };
             if let Err(e) = result {
-                this.show_error("Couldn't change the start-at-boot setting", e.message());
+                this.feedback.error("Couldn't change the start-at-boot setting", e.message());
             }
             this.refresh();
         });
     }
 
-    /// Reports a failed operation: a toast with a button for the details.
-    fn show_error(&self, title: &str, details: &str) {
-        let toast =
-            adw::Toast::builder().title(glib::markup_escape_text(title)).button_label("Details").timeout(8).build();
-        let window = self.window.clone();
-        let (title, details) = (title.to_owned(), details.to_owned());
-        toast.connect_button_clicked(move |_| {
-            let dialog = adw::AlertDialog::builder().heading(&title).body(&details).build();
-            dialog.add_response("close", "Close");
-            dialog.present(Some(&window));
+    /// Debug builds: `VMNG_DEV_SELECT=<vm name>` selects a VM and
+    /// `VMNG_DEV_ACTION=<action>` (e.g. `vm.snapshots`) activates an action,
+    /// so screenshots of deeper screens can be taken unattended.
+    #[cfg(debug_assertions)]
+    fn dev_hooks(&self) {
+        if let Ok(name) = std::env::var("VMNG_DEV_SELECT") {
+            let uuid = self.state.borrow().domains.iter().find(|d| d.config.name == name).map(|d| d.uuid.clone());
+            if let Some(uuid) = uuid {
+                self.vm_list.select(&uuid);
+            }
+        }
+        if let Ok(action) = std::env::var("VMNG_DEV_ACTION") {
+            let window = self.window.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                let _ = WidgetExt::activate_action(&window, &action, None);
+            });
+        }
+    }
+
+    fn vm_by_uuid(&self, uuid: &str) -> Option<DomainSummary> {
+        self.state.borrow().domains.iter().find(|d| d.uuid == uuid).cloned()
+    }
+
+    /// Handles a `vm.*` action for the VM `uuid`.
+    fn vm_action(self: &Rc<Self>, uuid: String, action: VmAction) {
+        let Some(vm) = self.vm_by_uuid(&uuid) else { return };
+        let Some(conn) = self.current_conn() else { return };
+        match action {
+            VmAction::Power(p) => self.request_power(uuid, p),
+            VmAction::Console => {}
+            VmAction::Hardware => self.open_vm_page(&vm, VmTab::Hardware),
+            VmAction::Snapshots => self.open_vm_page(&vm, VmTab::Snapshots),
+            VmAction::TakeSnapshot => {
+                let weak = Rc::downgrade(self);
+                take_snapshot_dialog(&self.feedback, conn, &vm, move || {
+                    if let Some(this) = weak.upgrade() {
+                        this.vm_page.snapshots.reload();
+                        this.refresh();
+                    }
+                });
+            }
+            VmAction::Clone => {
+                let (live, all) = {
+                    let st = self.state.borrow();
+                    (st.monitor.vm(&uuid).cloned(), st.domains.clone())
+                };
+                let weak = Rc::downgrade(self);
+                clone_dialog(&self.window, &vm, live.as_ref(), &all, move |name, disks| {
+                    if let Some(this) = weak.upgrade() {
+                        this.clone_vm(uuid.clone(), name, disks);
+                    }
+                });
+            }
+            VmAction::Rename => {
+                let all = self.state.borrow().domains.clone();
+                let weak = Rc::downgrade(self);
+                let old_name = vm.display_name().to_owned();
+                rename_dialog(&self.window, &vm, &all, move |name| {
+                    if let Some(this) = weak.upgrade() {
+                        let (id, n) = (uuid.clone(), name.clone());
+                        this.run_vm_op(
+                            move |c| c.rename_domain(&id, &n),
+                            format!("Couldn't rename {old_name}"),
+                            format!("Renamed {old_name} to {name}"),
+                        );
+                    }
+                });
+            }
+            VmAction::DiscardSavedState => {
+                let weak = Rc::downgrade(self);
+                let name = vm.display_name().to_owned();
+                self.feedback.confirm(
+                    &format!("Discard the saved state of {name}?"),
+                    "The machine starts fresh next time instead of resuming. Unsaved work in it is lost.",
+                    "Discard",
+                    true,
+                    move || {
+                        if let Some(this) = weak.upgrade() {
+                            let id = uuid.clone();
+                            this.run_vm_op(
+                                move |c| c.discard_saved_state(&id),
+                                format!("Couldn't discard the saved state of {name}"),
+                                format!("Discarded the saved state of {name}"),
+                            );
+                        }
+                    },
+                );
+            }
+            VmAction::Delete => {
+                if self.settings.get().confirm_delete {
+                    let (live, all) = {
+                        let st = self.state.borrow();
+                        (st.monitor.vm(&uuid).cloned(), st.domains.clone())
+                    };
+                    let weak = Rc::downgrade(self);
+                    delete_dialog(&self.window, &vm, live.as_ref(), &all, move |paths| {
+                        if let Some(this) = weak.upgrade() {
+                            this.delete_vm(uuid.clone(), paths);
+                        }
+                    });
+                } else {
+                    self.delete_vm(uuid, Vec::new());
+                }
+            }
+        }
+    }
+
+    fn open_vm_page(self: &Rc<Self>, vm: &DomainSummary, tab: VmTab) {
+        let Some(conn) = self.current_conn() else { return };
+        self.vm_page.select(tab);
+        self.vm_page.show(conn, vm);
+        if !self.vm_page_open() {
+            self.nav.push_by_tag(VmPage::TAG);
+        }
+    }
+
+    /// Runs a quick operation on the current connection, then refreshes.
+    fn run_vm_op(
+        self: &Rc<Self>,
+        op: impl FnOnce(&vmng_virt::Connection) -> vmng_virt::Result<()> + Send + 'static,
+        failure: String,
+        success: String,
+    ) {
+        let Some(conn) = self.current_conn() else { return };
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = conn.call(op).await;
+            let Some(this) = weak.upgrade() else { return };
+            match result {
+                Ok(()) => this.feedback.toast(&success),
+                Err(e) => this.feedback.error(&failure, e.message()),
+            }
+            this.refresh();
         });
-        self.toasts.add_toast(toast);
+    }
+
+    fn delete_vm(self: &Rc<Self>, uuid: String, paths: Vec<String>) {
+        let Some(conn) = self.current_conn() else { return };
+        let name = self.domain_name(&uuid);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let id = uuid.clone();
+            let result = conn.call(move |c| c.delete_domain(&id, &paths)).await;
+            let Some(this) = weak.upgrade() else { return };
+            match result {
+                Ok(failed) if failed.is_empty() => this.feedback.toast(&format!("Deleted {name}")),
+                Ok(failed) => {
+                    let details: Vec<String> = failed.iter().map(|(p, e)| format!("{p}: {}", e.message())).collect();
+                    this.feedback.error(&format!("Deleted {name}, but some disks were kept"), &details.join("\n"));
+                }
+                Err(e) => this.feedback.error(&format!("Couldn't delete {name}"), e.message()),
+            }
+            if this.vm_page_open() {
+                this.nav.pop_to_tag("main");
+            }
+            this.refresh();
+        });
+    }
+
+    fn clone_vm(self: &Rc<Self>, uuid: String, new_name: String, disks: Vec<(String, CloneDiskMode)>) {
+        let Some(conn) = self.current_conn() else { return };
+        let source = self.domain_name(&uuid);
+        let progress = Arc::new((AtomicU64::new(0), AtomicU64::new(0)));
+        self.job.start(&format!("Cloning {source} as {new_name}"));
+
+        // The copy runs on a worker thread; the bar follows its progress.
+        let p = progress.clone();
+        let job = self.job.clone();
+        let label = format!("Cloning {source}");
+        let ticker = glib::timeout_add_local(std::time::Duration::from_millis(400), move || {
+            let (done, total) = (p.0.load(Ordering::Relaxed), p.1.load(Ordering::Relaxed));
+            if total > 0 {
+                job.update(&format!("{label} — {}", format::used_of(done, total)), done as f64 / total as f64);
+            } else {
+                job.pulse();
+            }
+            glib::ControlFlow::Continue
+        });
+
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let n = new_name.clone();
+            let result = conn
+                .call(move |c| {
+                    c.clone_domain(&uuid, &n, &disks, &|done, total| {
+                        progress.0.store(done, Ordering::Relaxed);
+                        progress.1.store(total, Ordering::Relaxed);
+                    })
+                })
+                .await;
+            ticker.remove();
+            let Some(this) = weak.upgrade() else { return };
+            this.job.finish();
+            match result {
+                Ok(new_uuid) => {
+                    this.feedback.toast(&format!("Cloned {source} as {new_name}"));
+                    this.state.borrow_mut().pending_select = Some(new_uuid);
+                }
+                Err(e) => this.feedback.error(&format!("Couldn't clone {source}"), e.message()),
+            }
+            this.refresh();
+        });
+    }
+}
+
+/// A slim progress bar at the bottom of the window for long operations.
+#[derive(Clone, Debug)]
+struct JobBar {
+    revealer: gtk::Revealer,
+    label: gtk::Label,
+    bar: gtk::ProgressBar,
+}
+
+impl JobBar {
+    fn new() -> Self {
+        let label = gtk::Label::builder().xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::End).build();
+        let bar = gtk::ProgressBar::new();
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(8)
+            .css_classes(["card", "job-bar"])
+            .build();
+        content.append(&label);
+        content.append(&bar);
+        content.update_property(&[gtk::accessible::Property::Label("Operation in progress")]);
+        let clamp = adw::Clamp::builder()
+            .maximum_size(560)
+            .margin_bottom(12)
+            .margin_start(12)
+            .margin_end(12)
+            .child(&content)
+            .build();
+        let revealer =
+            gtk::Revealer::builder().transition_type(gtk::RevealerTransitionType::SlideUp).child(&clamp).build();
+        Self { revealer, label, bar }
+    }
+
+    fn start(&self, text: &str) {
+        self.label.set_label(text);
+        self.bar.set_fraction(0.0);
+        self.revealer.set_reveal_child(true);
+    }
+
+    fn update(&self, text: &str, fraction: f64) {
+        self.label.set_label(text);
+        self.bar.set_fraction(fraction.clamp(0.0, 1.0));
+    }
+
+    fn pulse(&self) {
+        self.bar.pulse();
+    }
+
+    fn finish(&self) {
+        self.revealer.set_reveal_child(false);
     }
 }
