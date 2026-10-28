@@ -183,7 +183,7 @@ struct Inner {
     menu: RefCell<Item>,
     revision: Cell<u32>,
     tooltip: RefCell<String>,
-    icon: String,
+    icon: RefCell<String>,
     on_command: Box<dyn Fn(TrayCommand)>,
 }
 
@@ -228,7 +228,7 @@ impl Tray {
             menu: RefCell::new(build_menu(&[])),
             revision: Cell::new(1),
             tooltip: RefCell::new(String::new()),
-            icon: icon.to_owned(),
+            icon: RefCell::new(icon.to_owned()),
             on_command: Box::new(on_command),
         });
 
@@ -252,7 +252,7 @@ impl Tray {
             })
             .property(move |_, _, _, _, name| {
                 let inner = w2.upgrade();
-                let icon = inner.as_ref().map_or_else(String::new, |i| i.icon.clone());
+                let icon = inner.as_ref().map_or_else(String::new, |i| i.icon.borrow().clone());
                 let tip = inner.as_ref().map_or_else(String::new, |i| i.tooltip.borrow().clone());
                 match name {
                     "Category" => "ApplicationStatus".to_variant(),
@@ -263,7 +263,7 @@ impl Tray {
                     "IconName" => icon.to_variant(),
                     // Development builds aren't installed, so point the host at our icons.
                     #[cfg(debug_assertions)]
-                    "IconThemePath" => crate::config::DEV_TRAY_ICON_DIR.to_variant(),
+                    "IconThemePath" => crate::config::dev_tray_icon_dir(&icon).to_variant(),
                     "ItemIsMenu" => false.to_variant(),
                     "Menu" => {
                         glib::variant::ObjectPath::try_from(MENU_PATH.to_owned()).expect("valid path").to_variant()
@@ -317,6 +317,16 @@ impl Tray {
         );
         inner.unwatch.replace(Some(Box::new(move || gio::bus_unwatch_name(watch))));
         Ok(Self(inner))
+    }
+
+    /// Switches to another icon theme name.
+    pub fn set_icon(&self, icon: &str) {
+        let inner = &self.0;
+        if *inner.icon.borrow() == icon {
+            return;
+        }
+        inner.icon.replace(icon.to_owned());
+        let _ = inner.conn.emit_signal(None, ITEM_PATH, "org.kde.StatusNotifierItem", "NewIcon", None);
     }
 
     /// Updates the machines in the menu and the tooltip.
