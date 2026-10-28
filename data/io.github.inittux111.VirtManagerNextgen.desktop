@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Virtual Machines
+GenericName=Virtual Machine Manager
+Comment=Create, run and manage QEMU/KVM virtual machines
+Exec=virt-manager-nextgen
+Icon=io.github.inittux111.VirtManagerNextgen
+Terminal=false
+Categories=System;Emulator;GTK;
+Keywords=vm;virtual;machine;kvm;qemu;libvirt;virtualization;virt-manager;
+StartupNotify=true

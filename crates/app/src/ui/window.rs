@@ -123,7 +123,7 @@ impl MainWindow {
         let section = gio::Menu::new();
         section.append(Some("Preferences"), Some("app.preferences"));
         section.append(Some("Keyboard Shortcuts"), Some("app.shortcuts"));
-        section.append(Some("About Virtual Machine Manager"), Some("app.about"));
+        section.append(Some("About Virtual Machines"), Some("app.about"));
         main_menu.append_section(None, &section);
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
