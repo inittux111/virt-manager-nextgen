@@ -4,15 +4,31 @@
 #
 #   ./build-deb.sh                 Debian 13 "trixie" (the default)
 #   ./build-deb.sh testing         another Debian release (13 or newer)
+#   ./build-deb.sh --latest        fetch the newest code from GitHub first
+#                                  (combines: ./build-deb.sh testing --latest)
 #
 # Builds the committed code (HEAD) at its current version; it doesn't make
 # a new version number (build-rpm.sh does that). The package lands in
 # target/debian/. Nothing is installed on the host.
 set -eu
 
-release=${1:-trixie}
+latest=false
+release=trixie
+for arg in "$@"; do
+    case $arg in
+        --latest) latest=true ;;
+        *) release=$arg ;;
+    esac
+done
 image=localhost/virt-manager-nextgen-debian:$release
 cd "$(dirname "$0")"
+
+# Fetch the newest code, then start again with it (this script may have
+# changed too).
+if $latest; then
+    packaging/update-sources.sh
+    exec ./build-deb.sh "$release"
+fi
 
 if ! command -v podman >/dev/null; then
     echo "podman is not installed." >&2
