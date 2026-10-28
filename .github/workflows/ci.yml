@@ -27,8 +27,8 @@ jobs:
           dnf -y install git rust cargo clippy rustfmt gcc pkgconf-pkg-config
           gtk4-devel libadwaita-devel libvirt-devel libosinfo-devel osinfo-db
           spice-glib-devel gvnc-devel vte291-gtk4-devel desktop-file-utils appstream
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -64,8 +64,8 @@ jobs:
           # Debian 13's own Rust is older than the app needs.
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
