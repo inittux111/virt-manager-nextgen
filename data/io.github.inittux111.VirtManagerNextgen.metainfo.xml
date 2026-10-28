@@ -42,6 +42,20 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.1" date="2026-10-28">
+      <description>
+        <ul>
+          <li>Point CLAUDE.md at BUILDING.md</li>
+          <li>Add BUILDING.md and keep earlier packages between builds</li>
+          <li>Document the versioned RPM builds</li>
+          <li>Give every RPM build the next version number</li>
+          <li>Open each machine's console in its own window</li>
+          <li>Add build-rpm.sh: build the RPM in the toolbox from the host</li>
+          <li>Give the hardware list a full right-click menu</li>
+          <li>Show a live picture of a running machine's screen in its details</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-28">
       <description>
         <p>First release.</p>
