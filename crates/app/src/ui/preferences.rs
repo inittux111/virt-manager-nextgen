@@ -143,13 +143,6 @@ fn general_page(s: &Settings) -> adw::PreferencesPage {
         });
         startup.add(&row);
     }
-    startup.add(&switch(
-        s,
-        "Open the console when a machine starts",
-        "When you start a machine from this app",
-        |p| p.console_autoconnect,
-        |p, v| p.console_autoconnect = v,
-    ));
     page.add(&startup);
     page
 }
@@ -197,6 +190,13 @@ fn new_vm_page(s: &Settings) -> adw::PreferencesPage {
 fn console_page(s: &Settings) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder().title("Console").icon_name("video-display-symbolic").build();
     let g = group("Display");
+    g.add(&switch(
+        s,
+        "Connect automatically",
+        "Show the screen as soon as a console window opens or its machine starts",
+        |p| p.console_autoconnect,
+        |p, v| p.console_autoconnect = v,
+    ));
     let scaling = adw::ComboRow::builder()
         .title("Scale the screen to the window")
         .model(&gtk::StringList::new(&["Always", "Never", "Only in fullscreen"]))

@@ -80,9 +80,6 @@ struct State {
     pending_view: Option<View>,
     /// A VM page to open once the VM appears (e.g. "customize before install").
     pending_page: Option<(String, VmTab)>,
-    /// A VM whose console opens once it shows as running ("open the
-    /// console when a machine starts").
-    pending_console: Option<String>,
     /// Whether hardware virtualization is available on the host.
     kvm: Option<bool>,
     /// A screen preview is being captured.
@@ -406,7 +403,6 @@ impl MainWindow {
                     .find(|v| v.id() == prefs.last_view && *v != View::Machines)
                     .filter(|_| remember_window()),
                 pending_page: None,
-                pending_console: None,
                 kvm: None,
                 preview_busy: false,
             }),
@@ -525,6 +521,14 @@ impl MainWindow {
             }
         });
         let weak = Rc::downgrade(self);
+        let weak2 = Rc::downgrade(self);
+        self.vm_list.connect_double_clicked(move |uuid| {
+            if let Some(this) = weak2.upgrade()
+                && let Some(vm) = this.vm_by_uuid(uuid)
+            {
+                this.open_console(&vm);
+            }
+        });
         self.vm_list.connect_activated(move |_| {
             if let Some(this) = weak.upgrade() {
                 this.split.show_detail();
@@ -856,17 +860,6 @@ impl MainWindow {
                 self.vm_list.select(&uuid);
             }
             self.vm_list.ensure_selection();
-            let console = self.state.borrow_mut().pending_console.take();
-            if let Some(uuid) = console {
-                match self.vm_by_uuid(&uuid) {
-                    Some(vm) if vm.state.is_active() => {
-                        self.vm_list.select(&uuid);
-                        self.open_console(&vm);
-                    }
-                    Some(_) => self.state.borrow_mut().pending_console = Some(uuid),
-                    None => {}
-                }
-            }
             let page = self.state.borrow_mut().pending_page.take();
             if let Some((uuid, tab)) = page
                 && let Some(vm) = self.vm_by_uuid(&uuid)
@@ -1083,7 +1076,6 @@ impl MainWindow {
     fn power(self: &Rc<Self>, uuid: String, action: PowerAction) {
         let Some(conn) = self.current_conn() else { return };
         let name = self.domain_name(&uuid);
-        let uuid_for_console = uuid.clone();
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let result = conn.call(move |c| c.power(&uuid, action)).await;
@@ -1091,9 +1083,6 @@ impl MainWindow {
             match result {
                 Err(e) => {
                     this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message())
-                }
-                Ok(()) if action == PowerAction::Start && this.settings.get().console_autoconnect => {
-                    this.state.borrow_mut().pending_console = Some(uuid_for_console);
                 }
                 Ok(()) => {}
             }
