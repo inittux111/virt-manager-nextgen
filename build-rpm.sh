@@ -33,7 +33,11 @@ if ! podman container exists "$box"; then
     toolbox run -c "$box" sudo dnf -y builddep "$spec"
     # Cargo's cache lives in the container, never in the shared home folder.
     toolbox run -c "$box" sh -c 'sudo mkdir -p /opt/cargo && sudo chown "$(id -u):$(id -g)" /opt/cargo'
+    # The security check used by maintenance.sh.
+    toolbox run -c "$box" env CARGO_HOME=/opt/cargo cargo install --locked --quiet cargo-audit
 fi
+
+packaging/toolbox-release.sh
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "Note: there are uncommitted changes; they are not in this build." >&2
