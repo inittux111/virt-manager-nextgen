@@ -2,15 +2,15 @@
 # Builds a Debian package (.deb) inside a podman container. Run it on the
 # host (any distribution with podman):
 #
-#   ./build-deb.sh                 Debian testing (the default)
-#   ./build-deb.sh unstable        another Debian release (needs GTK 4.20+)
+#   ./build-deb.sh                 Debian 13 "trixie" (the default)
+#   ./build-deb.sh testing         another Debian release (13 or newer)
 #
 # Builds the committed code (HEAD) at its current version; it doesn't make
 # a new version number (build-rpm.sh does that). The package lands in
 # target/debian/. Nothing is installed on the host.
 set -eu
 
-release=${1:-testing}
+release=${1:-trixie}
 image=localhost/virt-manager-nextgen-debian:$release
 cd "$(dirname "$0")"
 

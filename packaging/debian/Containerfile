@@ -1,14 +1,17 @@
-# Build environment for the Debian package (see build-deb.sh). The app needs
-# GTK 4.20 and libadwaita 1.8, so Debian 13 (trixie) is too old; testing
-# (forky) has them.
-ARG DEBIAN_RELEASE=testing
+# Build environment for the Debian package (see build-deb.sh). Debian 13
+# (trixie) and newer: on GTK 4.18 / libadwaita 1.7 the app builds without its
+# `gnome49` feature (make-deb.sh decides). Rust comes from rustup, because
+# Debian 13's own Rust is older than the app needs.
+ARG DEBIAN_RELEASE=trixie
 FROM docker.io/library/debian:${DEBIAN_RELEASE}-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        cargo rustc pkg-config build-essential dpkg-dev ca-certificates \
+        rustup pkg-config build-essential dpkg-dev ca-certificates \
         libgtk-4-dev libadwaita-1-dev libvirt-dev libosinfo-1.0-dev \
         libspice-client-glib-2.0-dev libgvnc-1.0-dev libvte-2.91-gtk4-dev \
         desktop-file-utils appstream \
     && rm -rf /var/lib/apt/lists/*
-# Cargo's cache lives in a podman volume, never in the home directory.
-ENV CARGO_HOME=/cargo
+# The toolchain lives in the image; Cargo's download cache in a podman
+# volume (/cargo), never in the home directory.
+ENV RUSTUP_HOME=/rustup CARGO_HOME=/cargo
+RUN rustup toolchain install stable --profile minimal && rustup default stable

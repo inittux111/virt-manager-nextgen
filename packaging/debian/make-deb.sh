@@ -8,7 +8,15 @@ cd /work/src
 version=$(sed -n 's/^Version: *//p' packaging/virt-manager-nextgen.spec)
 arch=$(dpkg --print-architecture)
 
-cargo build --release --locked -p virt-manager-nextgen
+# GNOME 49 libraries (GTK 4.20, libadwaita 1.8) get the full app; Debian 13's
+# GTK 4.18 / libadwaita 1.7 the build without the `gnome49` feature.
+if pkg-config --atleast-version=1.8 libadwaita-1; then
+    features="" gtk_min=4.20 adw_min=1.8
+else
+    features="--no-default-features" gtk_min=4.18 adw_min=1.7
+fi
+# shellcheck disable=SC2086
+cargo build --release --locked -p virt-manager-nextgen $features
 desktop-file-validate "data/$app_id.desktop"
 appstreamcli validate --no-net "data/$app_id.metainfo.xml"
 
@@ -34,7 +42,7 @@ Package: virt-manager-nextgen
 Version: $version
 Architecture: $arch
 Maintainer: ${MAINTAINER:-virt-manager-nextgen builder <noreply@localhost>}
-Depends: $libs, libgtk-4-1 (>= 4.20), libadwaita-1-0 (>= 1.8), osinfo-db
+Depends: $libs, libgtk-4-1 (>= $gtk_min), libadwaita-1-0 (>= $adw_min), osinfo-db
 Recommends: libvirt-daemon-system, qemu-system-x86 | qemu-system
 Suggests: swtpm, swtpm-tools
 Section: admin

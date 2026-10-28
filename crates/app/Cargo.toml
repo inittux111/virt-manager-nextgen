@@ -19,5 +19,12 @@ vmng-display.workspace = true
 gtk.workspace = true
 adw.workspace = true
 
+[features]
+default = ["gnome49"]
+# GTK 4.20 and libadwaita 1.8 (Fedora 44, Debian testing): the native
+# Keyboard Shortcuts dialog. Without it the app builds against GTK 4.18 and
+# libadwaita 1.7 (Debian 13) and uses its own shortcuts window.
+gnome49 = ["gtk/v4_20", "adw/v1_8"]
+
 [lints]
 workspace = true

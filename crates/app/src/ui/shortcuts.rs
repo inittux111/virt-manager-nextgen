@@ -88,8 +88,9 @@ pub fn set_app_enabled(enabled: bool) {
     }
 }
 
-/// The Keyboard Shortcuts dialog.
-pub fn dialog() -> adw::ShortcutsDialog {
+/// The Keyboard Shortcuts dialog (libadwaita's own, from 1.8).
+#[cfg(feature = "gnome49")]
+pub fn dialog() -> adw::Dialog {
     let dialog = adw::ShortcutsDialog::new();
     for (title, items) in SECTIONS {
         let section = adw::ShortcutsSection::new(Some(title));
@@ -98,7 +99,32 @@ pub fn dialog() -> adw::ShortcutsDialog {
         }
         dialog.add(section);
     }
-    dialog
+    dialog.upcast()
+}
+
+/// The Keyboard Shortcuts dialog for libadwaita 1.7 (Debian 13): the same
+/// sections and keys, as a preferences-style page.
+#[cfg(not(feature = "gnome49"))]
+pub fn dialog() -> adw::Dialog {
+    let page = adw::PreferencesPage::new();
+    for (title, items) in SECTIONS {
+        let group = adw::PreferencesGroup::builder().title(*title).build();
+        for s in *items {
+            let keys: Vec<String> = s
+                .accels
+                .iter()
+                .filter_map(|a| gtk::accelerator_parse(*a).map(|(key, mods)| gtk::accelerator_get_label(key, mods)))
+                .map(|l| l.to_string())
+                .collect();
+            let row = adw::ActionRow::builder().title(s.title).title_lines(2).build();
+            row.add_suffix(&gtk::Label::builder().label(keys.join("  or  ")).css_classes(["dim-label"]).build());
+            group.add(&row);
+        }
+        page.add(&group);
+    }
+    let toolbar = adw::ToolbarView::builder().content(&page).build();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    adw::Dialog::builder().title("Keyboard Shortcuts").content_width(560).content_height(640).child(&toolbar).build()
 }
 
 #[cfg(test)]
