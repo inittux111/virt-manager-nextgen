@@ -42,4 +42,4 @@ deb=$(ls -t "$out"/virt-manager-nextgen_*.deb | head -1)
 echo
 echo "Built $deb"
 echo "Install it on Debian with:"
-echo "  sudo apt install ./$(basename "$deb")"
+echo "  sudo apt install ./target/debian/$(basename "$deb")"
