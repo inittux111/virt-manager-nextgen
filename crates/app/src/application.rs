@@ -22,9 +22,10 @@ pub fn run() -> glib::ExitCode {
     let window: Rc<RefCell<Option<Rc<MainWindow>>>> = Rc::default();
     let settings = Settings::load();
 
-    app.connect_startup(|app| {
+    let s = settings.clone();
+    app.connect_startup(move |app| {
         load_css();
-        setup_actions(app);
+        setup_actions(app, &s);
     });
 
     app.connect_activate(move |app| {
@@ -53,7 +54,7 @@ fn load_css() {
     }
 }
 
-fn setup_actions(app: &adw::Application) {
+fn setup_actions(app: &adw::Application, settings: &Settings) {
     let quit = gio::SimpleAction::new("quit", None);
     let a = app.downgrade();
     quit.connect_activate(move |_, _| {
@@ -81,9 +82,14 @@ fn setup_actions(app: &adw::Application) {
     });
     app.add_action(&about);
 
-    // Arrives with the Preferences milestone.
     let prefs = gio::SimpleAction::new("preferences", None);
-    prefs.set_enabled(false);
+    let a = app.downgrade();
+    let s = settings.clone();
+    prefs.connect_activate(move |_, _| {
+        if let Some(window) = a.upgrade().and_then(|app| app.active_window()) {
+            crate::ui::preferences::open(&window, &s);
+        }
+    });
     app.add_action(&prefs);
 
     app.set_accels_for_action("app.quit", &["<Control>q"]);

@@ -30,8 +30,8 @@ fn name_error(name: &str, all: &[DomainSummary]) -> Option<&'static str> {
         .or_else(|| all.iter().any(|d| d.config.name == name).then_some("Another machine already has this name."))
 }
 
-fn allocation(live: Option<&VmLive>, target: &str) -> Option<u64> {
-    live?.disks.iter().find(|b| b.name == target)?.allocation
+fn allocation(live: Option<&VmLive>, target: &str, running: bool) -> Option<u64> {
+    live?.disks.iter().find(|b| b.name == target)?.used(running)
 }
 
 /// Asks for the clone's name and which disks to copy, then calls `start`.
@@ -54,7 +54,7 @@ pub fn clone_dialog(
     let disks_group = adw::PreferencesGroup::builder().title("Disks").build();
     let mut switches = Vec::new();
     for d in own_disks(vm) {
-        let size = allocation(live, &d.target).map(format::bytes);
+        let size = allocation(live, &d.target, vm.state.is_active()).map(format::bytes);
         let copy_text = match &size {
             Some(s) => format!("A copy is made · {s}"),
             None => "A copy is made".to_owned(),
@@ -143,7 +143,7 @@ pub fn delete_dialog(
         let Some(path) = d.source_path.clone() else { continue };
         let users = shared_with(&path, vm, all);
         if users.is_empty() {
-            total += allocation(live, &d.target).unwrap_or(0);
+            total += allocation(live, &d.target, vm.state.is_active()).unwrap_or(0);
             deletable.push(path);
         } else {
             kept.push(format!("{} is also used by {} and is kept.", file_name(&path), users.join(", ")));

@@ -34,7 +34,7 @@ pub use manage::{CloneDiskMode, unique_file_name, unique_name, validate_vm_name}
 pub use networks::{Ipv4Config, NetworkDetails, NetworkMode, NetworkSettings, apply_network_settings, suggest_subnet};
 pub use new_vm::{Created, GuestFamily, InstallSource, NetworkChoice, NewDisk, NewVm, build_domain_xml};
 pub use snapshot::{SnapshotInfo, SnapshotLocation, validate_snapshot_name};
-pub use stats::{BlockStats, DomainStats, HostStats, NetStats};
+pub use stats::{BlockStats, DomainStats, HostStats, NetStats, StatsWanted};
 pub use storage::{NewPool, PoolDetails, PoolKind, VolumeInfo, pool_xml};
 
 /// Silences libvirt's default behaviour of printing every error to stderr.

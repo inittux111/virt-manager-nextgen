@@ -39,10 +39,21 @@ pub struct BlockStats {
     pub path: Option<String>,
     pub read_bytes: u64,
     pub write_bytes: u64,
-    /// Bytes allocated on the host for the image.
+    /// For a stopped machine: bytes the image uses on the host. For a
+    /// running one libvirt reports the highest written offset here instead;
+    /// use [`BlockStats::used`].
     pub allocation: Option<u64>,
+    /// Bytes the image uses on the host (reported for running machines).
+    pub physical: Option<u64>,
     /// Virtual size seen by the guest.
     pub capacity: Option<u64>,
+}
+
+impl BlockStats {
+    /// Space the disk image takes on the host.
+    pub fn used(&self, running: bool) -> Option<u64> {
+        if running { self.physical.or(self.allocation) } else { self.allocation }
+    }
 }
 
 /// Raw counters of one network interface.
@@ -125,9 +136,33 @@ impl Value {
 }
 
 /// Fetches counters for every domain on the connection.
-pub(crate) fn all_domain_stats(conn: &Connect) -> Result<Vec<DomainStats>> {
+/// Which groups of counters to collect. Block devices (needed for disk
+/// usage) and the run state are always collected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatsWanted {
+    pub cpu: bool,
+    pub memory: bool,
+    pub network: bool,
+}
+
+impl Default for StatsWanted {
+    fn default() -> Self {
+        Self { cpu: true, memory: true, network: true }
+    }
+}
+
+pub(crate) fn all_domain_stats(conn: &Connect, wanted: StatsWanted) -> Result<Vec<DomainStats>> {
     let mut records: *mut sys::virDomainStatsRecordPtr = ptr::null_mut();
-    let what = STATS_STATE | STATS_CPU_TOTAL | STATS_BALLOON | STATS_VCPU | STATS_INTERFACE | STATS_BLOCK;
+    let mut what = STATS_STATE | STATS_BLOCK;
+    if wanted.cpu {
+        what |= STATS_CPU_TOTAL | STATS_VCPU;
+    }
+    if wanted.memory {
+        what |= STATS_BALLOON;
+    }
+    if wanted.network {
+        what |= STATS_INTERFACE;
+    }
     // SAFETY: valid connection and out pointer; on success libvirt hands us
     // a NULL-terminated array we release with virDomainStatsRecordListFree.
     let n = unsafe { sys::virConnectGetAllDomainStats(conn.as_ptr(), what, &mut records, 0) };
@@ -231,6 +266,7 @@ unsafe fn apply(
                     "rd.bytes" => b.read_bytes = value.as_u64().unwrap_or(0),
                     "wr.bytes" => b.write_bytes = value.as_u64().unwrap_or(0),
                     "allocation" => b.allocation = value.as_u64(),
+                    "physical" => b.physical = value.as_u64(),
                     "capacity" => b.capacity = value.as_u64(),
                     _ => {}
                 }

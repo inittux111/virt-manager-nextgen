@@ -95,6 +95,12 @@ impl FormDialog {
 
     pub fn present(&self, parent: &impl IsA<gtk::Widget>) {
         self.dialog.present(Some(parent));
+        // Debug builds: VMNG_DEV_FORM_SUBMIT=1 presses the primary button.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("VMNG_DEV_FORM_SUBMIT").is_some() {
+            let primary = self.primary.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(800), move || primary.emit_clicked());
+        }
     }
 
     pub fn close(&self) {

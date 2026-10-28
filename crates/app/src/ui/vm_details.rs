@@ -80,6 +80,8 @@ pub struct VmDetails {
     machine: gtk::Label,
     autostart: adw::SwitchRow,
     autostart_guard: RefCell<bool>,
+    /// Which graphs are collected (CPU, memory, disk, network).
+    collect: std::cell::Cell<[bool; 4]>,
     storage: gtk::Box,
     /// Built for the current disk count; `None` until first shown.
     storage_meters: RefCell<Option<Vec<Meter>>>,
@@ -233,6 +235,7 @@ impl VmDetails {
             machine,
             autostart,
             autostart_guard: RefCell::new(false),
+            collect: std::cell::Cell::new([true; 4]),
             storage,
             storage_meters: RefCell::default(),
             on_autostart: RefCell::default(),
@@ -251,6 +254,11 @@ impl VmDetails {
             }
         });
         this
+    }
+
+    /// Which statistics are collected (from Preferences).
+    pub fn set_collect(&self, collect: [bool; 4]) {
+        self.collect.set(collect);
     }
 
     pub fn connect_autostart(&self, f: impl Fn(&str, bool) + 'static) {
@@ -318,6 +326,13 @@ impl VmDetails {
             self.net.set("—", "", false);
         }
 
+        // Statistics turned off in Preferences say so instead of "—".
+        let [c_cpu, c_mem, c_disk, c_net] = self.collect.get();
+        for (on, card) in [(c_cpu, &self.cpu), (c_mem, &self.memory), (c_disk, &self.disk), (c_net, &self.net)] {
+            if !on {
+                card.set("Off", "Turned off in Preferences", false);
+            }
+        }
         let empty = Vec::<f64>::new();
         let (cpu, mem, disk, net) = match live.filter(|_| active) {
             Some(l) => (
@@ -329,16 +344,16 @@ impl VmDetails {
             None => (empty.clone(), empty.clone(), empty.clone(), empty),
         };
         self.cpu.graph.set_max(Some(100.0));
-        self.cpu.graph.set_values(cpu);
+        self.cpu.graph.set_values(if c_cpu { cpu } else { Vec::new() });
         self.memory.graph.set_max(Some(d.config.memory.max(1) as f64));
-        self.memory.graph.set_values(mem);
+        self.memory.graph.set_values(if c_mem { mem } else { Vec::new() });
         // I/O graphs scale to their own peak, with a floor so idle noise
         // stays flat.
         let peak = |v: &Vec<f64>| Some(v.iter().copied().fold(64.0 * 1024.0, f64::max));
         self.disk.graph.set_max(peak(&disk));
-        self.disk.graph.set_values(disk);
+        self.disk.graph.set_values(if c_disk { disk } else { Vec::new() });
         self.net.graph.set_max(peak(&net));
-        self.net.graph.set_values(net);
+        self.net.graph.set_values(if c_net { net } else { Vec::new() });
     }
 
     fn show_facts(&self, d: &DomainSummary, guest: Option<&GuestDetails>, changed_vm: bool) {
@@ -445,7 +460,7 @@ impl VmDetails {
             let usage = live.and_then(|l| l.disks.iter().find(|b| b.name == disk.target));
             let raw = disk.format.as_deref() == Some("raw");
             m.set_warning_allowed(!raw);
-            match usage.and_then(|u| u.allocation.zip(u.capacity)) {
+            match usage.and_then(|u| u.used(d.state.is_active()).zip(u.capacity)) {
                 Some((alloc, cap)) if cap > 0 => m.set(alloc as f64 / cap as f64, &format::used_of(alloc, cap)),
                 _ => m.set(0.0, "—"),
             }
