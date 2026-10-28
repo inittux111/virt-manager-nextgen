@@ -209,6 +209,20 @@ impl Connection {
         Ok(vol.get_path()?)
     }
 
+    /// Creates an empty disk image named after `base` (made unique in the
+    /// pool, e.g. `fedora-2.qcow2`) and returns its path.
+    pub fn create_disk(&self, pool: &str, base: &str, size: u64, format: &str) -> Result<String> {
+        let ext = if format == "qcow2" { ".qcow2" } else { ".img" };
+        let name = crate::manage::unique_file_name(base, ext, |n| !self.volume_name_free(pool, n));
+        self.create_volume(pool, &name, size, format)
+    }
+
+    /// Deletes the storage volume at `path` (used to roll back).
+    pub fn delete_volume_at(&self, path: &str) -> Result<()> {
+        virt::storage_vol::StorageVol::lookup_by_path(self.raw(), path)?.delete(0)?;
+        Ok(())
+    }
+
     /// Whether a volume name is free in a pool.
     pub(crate) fn volume_name_free(&self, pool: &str, name: &str) -> bool {
         StoragePool::lookup_by_name(self.raw(), pool)

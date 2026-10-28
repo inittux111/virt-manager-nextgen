@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `PLAN.md` is the source of truth for goals, scope and the required feature list. Read it before starting any feature work.
 
-Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard ✔, 5 hardware details / Add Hardware / XML editing, 6 console (SPICE/VNC/serial), 7 host overview, networks, storage, Preferences, 8 graphs, guest agent, tray, 9 app icon + polish, then the RPM. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
+Milestones (in order): 1 foundation ✔, 2 main window (VM list, details, host summary, title menu) ✔, 3 VM lifecycle + clone + snapshots ✔, 4 New VM wizard ✔, 5 hardware details / Add Hardware / XML editing ✔, 6 console (SPICE/VNC/serial), 7 host overview, networks, storage, Preferences, 8 graphs, guest agent, tray, 9 app icon + polish, then the RPM. Screens of later milestones show as disabled actions or "arrives in a later update" placeholders.
 
 ## Commands
 
@@ -20,11 +20,12 @@ toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo fmt --all
 ./target/debug/virt-manager-nextgen                                   # run on the host
 toolbox run -c virt-manager-nextgen env CARGO_HOME=/opt/cargo cargo run -p vmng-virt --example inspect -- qemu:///system   # dump what the libvirt layer sees
 ./target/debug/examples/newvm_check qemu:///system default <iso>   # create/start/delete a throwaway vmng-test-newvm
+./target/debug/examples/hw_check qemu:///system default <iso>   # device add/edit/live-update/remove on a throwaway vmng-test-hw
 ./target/debug/examples/identify <iso>…   # OS detection (vmng-osinfo example)
 ./target/debug/examples/selftest <empty-dir>   # end-to-end snapshot/clone/rename/delete on a throwaway qemu:///session VM (build with --example selftest)
 ```
 
-UI review without touching the real desktop: start a headless compositor on the host (`mutter --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display=vmng-test &`), then run the debug binary with `WAYLAND_DISPLAY=vmng-test VMNG_SCREENSHOT=/path/out.png` (optional `VMNG_SCREENSHOT_DELAY=<secs>`); it renders the window to a PNG and quits (debug builds only, `crates/app/src/dev.rs`). `VMNG_DEV_SELECT=<vm name>` and `VMNG_DEV_ACTION=<action>` (e.g. `vm.snapshots`, `vm.clone`, `win.new-vm`) open deeper screens first; in the wizard `VMNG_DEV_WIZARD_STEP=<0-3>`, `VMNG_DEV_WIZARD_CHOOSE=1` (OS chooser) and `VMNG_DEV_WIZARD_CREATE=<name>` (creates a VM without network: use a `vmng-test-…` name and delete it afterwards with `virsh undefine <name> --nvram --storage vda`, never `--remove-all-storage`, which would also delete the ISO). Theme variants: `ADW_DEBUG_COLOR_SCHEME=prefer-dark|prefer-light`, `ADW_DEBUG_HIGH_CONTRAST=1`; for plain Adwaita (without Abyss) point `XDG_CONFIG_HOME` at a directory without `gtk-4.0/gtk.css`. Only one instance per app id runs per session, so take screenshots one at a time. For a running-VM test, use a transient domain on `qemu:///session` (`virsh create`) and destroy it afterwards; never start or change the user's own VMs.
+UI review without touching the real desktop: start a headless compositor on the host (`mutter --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display=vmng-test &`), then run the debug binary with `WAYLAND_DISPLAY=vmng-test VMNG_SCREENSHOT=/path/out.png` (optional `VMNG_SCREENSHOT_DELAY=<secs>`); it renders the window to a PNG and quits (debug builds only, `crates/app/src/dev.rs`). `VMNG_DEV_SELECT=<vm name>` and `VMNG_DEV_ACTION=<action>` (e.g. `vm.snapshots`, `vm.clone`, `win.new-vm`) open deeper screens first; in the wizard `VMNG_DEV_WIZARD_STEP=<0-3>`, `VMNG_DEV_WIZARD_CHOOSE=1` (OS chooser) and `VMNG_DEV_HW_ROW=<n>` (hardware list row, negative = from the end), `VMNG_DEV_HW_ADD=1` / `VMNG_DEV_HW_ADD_CLICK=1` (Add Hardware, press Add), `VMNG_DEV_HW_MEMORY=<MiB>` (edit + Apply), `VMNG_DEV_WIZARD_CREATE=<name>` (creates a VM without network: use a `vmng-test-…` name and delete it afterwards with `virsh undefine <name> --nvram --storage vda`, never `--remove-all-storage`, which would also delete the ISO). Theme variants: `ADW_DEBUG_COLOR_SCHEME=prefer-dark|prefer-light`, `ADW_DEBUG_HIGH_CONTRAST=1`; for plain Adwaita (without Abyss) point `XDG_CONFIG_HOME` at a directory without `gtk-4.0/gtk.css`. Only one instance per app id runs per session, so take screenshots one at a time. For a running-VM test, use a transient domain on `qemu:///session` (`virsh create`) and destroy it afterwards; never start or change the user's own VMs.
 
 ## Architecture
 
@@ -42,6 +43,7 @@ Cargo workspace (edition 2024):
   - `ui/vm_actions.rs`: the single `vm.*` action group (enabled per VM state) plus the shared VM buttons and menus; every VM control uses these action names.
   - `ui/feedback.rs` (toasts, error toast with details, confirmations) and `ui/widgets/form_dialog.rs` (Cancel / primary / inline error) are the standard dialogs.
   - New VM wizard: `ui/new_vm.rs` (four steps, OS defaults from osinfo, the dialog owns the wizard until closed) and `ui/os_chooser.rs`. The XML it produces comes from `vmng_virt::build_domain_xml` (disk boots first, installer second, so the installer is skipped once the OS is installed).
+  - Hardware tab: `ui/hardware/` (`mod.rs` list + editor + Apply/Revert bar over a working copy of the full domain XML; `editors.rs` per-device editors bound through `Bind`; `add.rs` Add Hardware; `labels.rs` names/icons). Saving redefines the whole persistent XML (`save_domain_config` refuses UUID/name changes); CD and link-state changes go live via `update_device`; add/remove use attach/detach with LIVE+CONFIG falling back to CONFIG.
   - Machines view: `ui/vm_list.rs`, `ui/vm_details.rs`, `ui/title_menu.rs`. VM page: `ui/vm_page.rs` (tabs), `ui/snapshots.rs`. `ui/vm_dialogs.rs`: clone, rename, delete.
   - `style.css` is loaded at APPLICATION priority and uses only libadwaita CSS variables. Graph colours: `sparkline.cpu|memory|disk|network`.
 

@@ -238,7 +238,13 @@ impl MainWindow {
                 this.refresh();
             }
         });
-        let vm_page = VmPage::new(snapshots);
+        let m = me.clone();
+        let hardware = super::hardware::HardwareView::new(feedback.clone(), settings.clone(), move || {
+            if let Some(this) = m.borrow().upgrade() {
+                this.refresh();
+            }
+        });
+        let vm_page = VmPage::new(snapshots, hardware);
         nav.add(&vm_page.page);
         let this = Rc::new(Self {
             window,
@@ -365,6 +371,9 @@ impl MainWindow {
         let weak = Rc::downgrade(self);
         self.nav.connect_visible_page_notify(move |_| {
             if let Some(this) = weak.upgrade() {
+                if !this.vm_page_open() {
+                    this.vm_page.hardware.leave();
+                }
                 let selected = this.vm_list.selected();
                 this.show_selected(selected.as_deref());
             }
@@ -654,7 +663,7 @@ impl MainWindow {
                 if self.vm_page_open()
                     && let Some(conn) = self.current_conn_in(&st)
                 {
-                    self.vm_page.show(conn, d);
+                    self.vm_page.show(conn, d, st.host_info.clone());
                 }
             }
             None => {
@@ -919,7 +928,8 @@ impl MainWindow {
     fn open_vm_page(self: &Rc<Self>, vm: &DomainSummary, tab: VmTab) {
         let Some(conn) = self.current_conn() else { return };
         self.vm_page.select(tab);
-        self.vm_page.show(conn, vm);
+        let host = self.state.borrow().host_info.clone();
+        self.vm_page.show(conn, vm, host);
         if !self.vm_page_open() {
             self.nav.push_by_tag(VmPage::TAG);
         }

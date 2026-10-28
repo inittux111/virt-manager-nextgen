@@ -4,8 +4,9 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use vmng_virt::DomainSummary;
+use vmng_virt::{DomainSummary, HostInfo};
 
+use super::hardware::HardwareView;
 use super::snapshots::SnapshotsView;
 use super::vm_actions::VmButtons;
 use super::vm_list::{logo_key, os_label, state_text};
@@ -38,6 +39,7 @@ pub struct VmPage {
     status: StatusLabel,
     buttons: VmButtons,
     pub snapshots: Rc<SnapshotsView>,
+    pub hardware: Rc<HardwareView>,
 }
 
 impl std::fmt::Debug for VmPage {
@@ -53,14 +55,9 @@ fn later(icon: &str, title: &str, text: &str) -> adw::StatusPage {
 impl VmPage {
     pub const TAG: &'static str = "vm";
 
-    pub fn new(snapshots: Rc<SnapshotsView>) -> Self {
+    pub fn new(snapshots: Rc<SnapshotsView>, hardware: Rc<HardwareView>) -> Self {
         let stack = adw::ViewStack::new();
-        stack.add_titled_with_icon(
-            &later("emblem-system-symbolic", "Hardware", "Viewing and editing every device arrives in a later update."),
-            Some(VmTab::Hardware.id()),
-            "Hardware",
-            "emblem-system-symbolic",
-        );
+        stack.add_titled_with_icon(&hardware.root, Some(VmTab::Hardware.id()), "Hardware", "emblem-system-symbolic");
         stack.add_titled_with_icon(&snapshots.root, Some(VmTab::Snapshots.id()), "Snapshots", "camera-photo-symbolic");
         stack.add_titled_with_icon(
             &later(
@@ -99,7 +96,7 @@ impl VmPage {
         let toolbar = adw::ToolbarView::builder().content(&stack).build();
         toolbar.add_top_bar(&header);
         let page = adw::NavigationPage::builder().tag(Self::TAG).title("Machine").child(&toolbar).build();
-        Self { page, stack, logo, name, status, buttons, snapshots }
+        Self { page, stack, logo, name, status, buttons, snapshots, hardware }
     }
 
     pub fn select(&self, tab: VmTab) {
@@ -107,12 +104,13 @@ impl VmPage {
     }
 
     /// Shows `vm`; called on every refresh while the page is open.
-    pub fn show(&self, conn: Conn, vm: &DomainSummary) {
+    pub fn show(&self, conn: Conn, vm: &DomainSummary, host: Option<HostInfo>) {
         self.page.set_title(vm.display_name());
         self.logo.set_logo(logo_key(vm));
         self.name.set_label(vm.display_name());
         self.status.set(Tone::of(vm.state), &format!("{} · {}", state_text(vm), os_label(vm)));
         self.buttons.update(vm.state);
+        self.hardware.set_target(conn.clone(), vm, host);
         self.snapshots.set_target(conn, vm);
     }
 }

@@ -57,6 +57,15 @@ pub fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
     (2..).map(|i| format!("{base}-{i}")).find(|n| !taken(n)).unwrap_or_else(|| base.to_owned())
 }
 
+/// Picks `stem.ext`, `stem-2.ext`, `stem-3.ext`, … whichever `taken` does
+/// not contain. `ext` includes the dot or is empty.
+pub fn unique_file_name(stem: &str, ext: &str, taken: impl Fn(&str) -> bool) -> String {
+    (1..)
+        .map(|i| if i == 1 { format!("{stem}{ext}") } else { format!("{stem}-{i}{ext}") })
+        .find(|n| !taken(n))
+        .unwrap_or_else(|| format!("{stem}{ext}"))
+}
+
 /// Prepares the new domain's XML: new name, fresh UUID and MAC addresses.
 pub(crate) fn clone_domain_xml(source: &Element, new_name: &str) -> Element {
     let mut xml = source.clone();
@@ -207,7 +216,7 @@ impl Connection {
                 let vmng_xml::Node::Element(disk) = &devices.children[*i] else { continue };
                 let target = disk.find_attr("target", "dev").unwrap_or("disk");
                 let stem = if single { new_name.to_owned() } else { format!("{new_name}-{target}") };
-                let name = unique_name(&format!("{stem}{}", extension(path)), taken);
+                let name = unique_file_name(&stem, extension(path), taken);
                 let before = base_done.load(Ordering::Relaxed);
                 let report = |bytes: u64| progress((before + bytes).min(total), total);
                 let new_vol = self.copy_volume(vol, &name, &report)?;
@@ -239,7 +248,7 @@ impl Connection {
                     Some(vol) => {
                         let pool = StoragePool::lookup_by_volume(vol)?;
                         let taken = |n: &str| StorageVol::lookup_by_name(&pool, n).is_ok();
-                        let name = unique_name(&format!("{new_name}_VARS{}", extension(path)), taken);
+                        let name = unique_file_name(&format!("{new_name}_VARS"), extension(path), taken);
                         let v = self.copy_volume(vol, &name, &|_| {})?;
                         let p = v.get_path()?;
                         created.push(v);
@@ -332,6 +341,7 @@ mod tests {
         }
         assert_eq!(unique_name("a", |n| n == "a" || n == "a-2"), "a-3");
         assert_eq!(unique_name("a", |_| false), "a");
+        assert_eq!(unique_file_name("vm", ".qcow2", |n| n == "vm.qcow2"), "vm-2.qcow2");
     }
 
     #[test]

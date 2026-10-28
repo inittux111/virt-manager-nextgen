@@ -1,6 +1,7 @@
 //! All user interface code.
 
 mod feedback;
+mod hardware;
 mod new_vm;
 mod os_chooser;
 mod snapshots;

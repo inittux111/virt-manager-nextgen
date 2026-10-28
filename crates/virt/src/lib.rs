@@ -10,6 +10,7 @@
 
 mod config;
 mod connection;
+mod devices;
 mod domain;
 mod error;
 mod host;
@@ -21,10 +22,11 @@ pub mod units;
 
 pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceConfig};
 pub use connection::{Connection, ConnectionKind, GuestDetails, HostInfo, PoolSummary};
+pub use devices::{DeviceKind, DeviceRef, disk_prefix, list_devices, next_disk_target, replace_device};
 pub use domain::{DomainState, DomainSummary, PowerAction};
 pub use error::{Error, Result};
 pub use host::{DomainCaps, GuestArch, HostCaps, InstallImage, NetworkSummary};
-pub use manage::{CloneDiskMode, unique_name, validate_vm_name};
+pub use manage::{CloneDiskMode, unique_file_name, unique_name, validate_vm_name};
 pub use new_vm::{Created, GuestFamily, InstallSource, NetworkChoice, NewDisk, NewVm, build_domain_xml};
 pub use snapshot::{SnapshotInfo, SnapshotLocation, validate_snapshot_name};
 pub use stats::{BlockStats, DomainStats, HostStats, NetStats};
