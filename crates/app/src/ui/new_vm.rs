@@ -604,6 +604,14 @@ impl Wizard {
         }
         let labels: Vec<String> = st.media.iter().map(|(l, _)| l.clone()).collect();
         self.media_row.set_model(Some(&string_list(&labels)));
+        // Debug builds: `VMNG_DEV_WIZARD_MEDIA=<text>` picks the first image
+        // whose name contains it.
+        #[cfg(debug_assertions)]
+        if let Ok(want) = std::env::var("VMNG_DEV_WIZARD_MEDIA")
+            && let Some(i) = st.media.iter().position(|(l, _)| l.contains(&want))
+        {
+            self.media_row.set_selected(i as u32);
+        }
 
         // Architectures: the host's own first.
         let host_arch = if data.caps.host_arch.is_empty() { "x86_64".to_owned() } else { data.caps.host_arch.clone() };
