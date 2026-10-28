@@ -76,6 +76,8 @@ struct State {
     timer: Option<glib::SourceId>,
     /// A VM to select once it appears in the list (e.g. a new clone).
     pending_select: Option<String>,
+    /// The view to show once the first data has arrived (the last one used).
+    pending_view: Option<View>,
     /// A VM page to open once the VM appears (e.g. "customize before install").
     pending_page: Option<(String, VmTab)>,
     /// A VM whose console opens once it shows as running ("open the
@@ -125,14 +127,49 @@ impl std::fmt::Debug for MainWindow {
     }
 }
 
+/// Whether the window's size, view and VM are restored and saved. Not in
+/// debug screenshot runs, which mustn't disturb the person's own settings.
+fn remember_window() -> bool {
+    // `VMNG_DEV_REMEMBER=1` turns it on anyway (with a test XDG_CONFIG_HOME).
+    #[cfg(debug_assertions)]
+    if std::env::var_os("VMNG_SCREENSHOT").is_some() {
+        return std::env::var_os("VMNG_DEV_REMEMBER").is_some();
+    }
+    true
+}
+
 impl MainWindow {
+    /// Saves the window's size, maximized state, view and selected VM, so
+    /// the next start opens the same way.
+    pub fn save_window_state(&self) {
+        if !remember_window() {
+            return;
+        }
+        let maximized = self.window.is_maximized();
+        // The size before maximizing, so un-maximizing later is sensible.
+        let (width, height) = self.window.default_size();
+        let view = self.state.borrow().view.id().to_owned();
+        let vm = self.vm_list.selected().unwrap_or_default();
+        self.settings.update(|p| {
+            if width > 0 && height > 0 {
+                p.window_width = width;
+                p.window_height = height;
+            }
+            p.window_maximized = maximized;
+            p.last_view = view;
+            p.last_vm = vm;
+        });
+    }
+
     pub fn new(app: &adw::Application, settings: Settings) -> Rc<Self> {
         let prefs = settings.get();
+        // Opens as it was last closed.
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title(crate::config::APP_NAME)
-            .default_width(1280)
-            .default_height(820)
+            .default_width(prefs.window_width)
+            .default_height(prefs.window_height)
+            .maximized(prefs.window_maximized && remember_window())
             .width_request(360)
             .height_request(400)
             .build();
@@ -363,7 +400,11 @@ impl MainWindow {
                 polling: false,
                 tick: 0,
                 timer: None,
-                pending_select: None,
+                pending_select: Some(prefs.last_vm.clone()).filter(|u| !u.is_empty() && remember_window()),
+                pending_view: View::ALL
+                    .into_iter()
+                    .find(|v| v.id() == prefs.last_view && *v != View::Machines)
+                    .filter(|_| remember_window()),
                 pending_page: None,
                 pending_console: None,
                 kvm: None,
@@ -397,6 +438,7 @@ impl MainWindow {
         let weak = Rc::downgrade(&this);
         this.window.connect_close_request(move |w| {
             let Some(this) = weak.upgrade() else { return glib::Propagation::Proceed };
+            this.save_window_state();
             if this.tray.borrow().is_some() {
                 w.set_visible(false);
                 return glib::Propagation::Stop;
@@ -831,6 +873,11 @@ impl MainWindow {
             {
                 self.open_vm_page(&vm, tab);
             }
+        }
+        // (Taken first: the state can't stay borrowed while switching.)
+        let pending_view = if tick == 1 { self.state.borrow_mut().pending_view.take() } else { None };
+        if let Some(view) = pending_view {
+            self.set_view(view);
         }
         #[cfg(debug_assertions)]
         if tick == 1 {

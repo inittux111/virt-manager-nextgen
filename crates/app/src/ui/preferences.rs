@@ -52,12 +52,6 @@ fn group(title: &str) -> adw::PreferencesGroup {
     adw::PreferencesGroup::builder().title(title).build()
 }
 
-/// Whether a shared library can be found (for optional features).
-fn library_present(names: &[&str]) -> bool {
-    let dirs = ["/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"];
-    names.iter().any(|n| dirs.iter().any(|d| std::path::Path::new(d).join(n).exists()))
-}
-
 pub fn open(parent: &impl IsA<gtk::Widget>, settings: &Settings) {
     // Wide enough that the page switcher sits at the top.
     let dialog = adw::PreferencesDialog::builder().search_enabled(true).content_width(820).content_height(640).build();
@@ -97,18 +91,6 @@ fn general_page(s: &Settings) -> adw::PreferencesPage {
         color.set_sensitive(false);
     }
     features.add(&color);
-    let guestfs = switch(
-        s,
-        "Inspect guests with libguestfs",
-        "Shows installed applications and OS details",
-        |p| p.libguestfs_inspection,
-        |p, v| p.libguestfs_inspection = v,
-    );
-    if !library_present(&["libguestfs.so.0"]) {
-        guestfs.set_subtitle("Not available: libguestfs is not installed");
-        guestfs.set_sensitive(false);
-    }
-    features.add(&guestfs);
     features.add(&switch(
         s,
         "Allow editing the raw XML",

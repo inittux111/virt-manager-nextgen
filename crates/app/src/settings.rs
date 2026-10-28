@@ -38,7 +38,6 @@ pub struct Prefs {
     pub tray_icon: bool,
     /// Full-color tray icon instead of one matching the top bar.
     pub tray_icon_color: bool,
-    pub libguestfs_inspection: bool,
     pub xml_editing: bool,
 
     pub console_autoconnect: bool,
@@ -58,6 +57,14 @@ pub struct Prefs {
     pub confirm_delete: bool,
     pub confirm_remove_device: bool,
     pub confirm_unapplied_changes: bool,
+
+    /// The main window as it was last closed.
+    pub window_width: i32,
+    pub window_height: i32,
+    pub window_maximized: bool,
+    /// The view (`machines`, `host`, …) and VM (UUID) that were open.
+    pub last_view: String,
+    pub last_vm: String,
 }
 
 impl Default for Prefs {
@@ -72,7 +79,6 @@ impl Default for Prefs {
             stats_network: true,
             tray_icon: false,
             tray_icon_color: false,
-            libguestfs_inspection: false,
             xml_editing: false,
             console_autoconnect: true,
             console_scaling: ConsoleScaling::Always,
@@ -88,6 +94,11 @@ impl Default for Prefs {
             confirm_delete: true,
             confirm_remove_device: true,
             confirm_unapplied_changes: true,
+            window_width: 1280,
+            window_height: 820,
+            window_maximized: false,
+            last_view: "machines".into(),
+            last_vm: String::new(),
         }
     }
 }
@@ -184,7 +195,6 @@ fn read(kf: &glib::KeyFile) -> Prefs {
         stats_network: b("stats", "network", d.stats_network),
         tray_icon: b("general", "tray-icon", d.tray_icon),
         tray_icon_color: b("general", "tray-icon-color", d.tray_icon_color),
-        libguestfs_inspection: b("general", "libguestfs", d.libguestfs_inspection),
         xml_editing: b("general", "xml-editing", d.xml_editing),
         console_autoconnect: b("console", "autoconnect", d.console_autoconnect),
         console_scaling: SCALING.iter().find(|(_, n)| *n == scaling).map_or(d.console_scaling, |(v, _)| *v),
@@ -200,6 +210,11 @@ fn read(kf: &glib::KeyFile) -> Prefs {
         confirm_delete: b("confirm", "delete", d.confirm_delete),
         confirm_remove_device: b("confirm", "remove-device", d.confirm_remove_device),
         confirm_unapplied_changes: b("confirm", "unapplied-changes", d.confirm_unapplied_changes),
+        window_width: kf.integer("window", "width").map_or(d.window_width, |v| v.clamp(360, 16384)),
+        window_height: kf.integer("window", "height").map_or(d.window_height, |v| v.clamp(300, 16384)),
+        window_maximized: b("window", "maximized", d.window_maximized),
+        last_view: s("window", "view", &d.last_view),
+        last_vm: s("window", "vm", &d.last_vm),
     }
 }
 
@@ -216,7 +231,6 @@ fn write(p: &Prefs) -> glib::KeyFile {
     kf.set_boolean("stats", "network", p.stats_network);
     kf.set_boolean("general", "tray-icon", p.tray_icon);
     kf.set_boolean("general", "tray-icon-color", p.tray_icon_color);
-    kf.set_boolean("general", "libguestfs", p.libguestfs_inspection);
     kf.set_boolean("general", "xml-editing", p.xml_editing);
     kf.set_boolean("console", "autoconnect", p.console_autoconnect);
     let scaling = SCALING.iter().find(|(v, _)| *v == p.console_scaling).map_or("always", |(_, n)| n);
@@ -233,6 +247,11 @@ fn write(p: &Prefs) -> glib::KeyFile {
     kf.set_boolean("confirm", "delete", p.confirm_delete);
     kf.set_boolean("confirm", "remove-device", p.confirm_remove_device);
     kf.set_boolean("confirm", "unapplied-changes", p.confirm_unapplied_changes);
+    kf.set_integer("window", "width", p.window_width);
+    kf.set_integer("window", "height", p.window_height);
+    kf.set_boolean("window", "maximized", p.window_maximized);
+    kf.set_string("window", "view", &p.last_view);
+    kf.set_string("window", "vm", &p.last_vm);
     kf
 }
 
@@ -248,6 +267,10 @@ mod tests {
             console_scaling: ConsoleScaling::FullscreenOnly,
             xml_editing: true,
             tray_icon_color: true,
+            window_width: 900,
+            window_maximized: true,
+            last_view: "storage".into(),
+            last_vm: "0b7c-uuid".into(),
             ..Default::default()
         };
         let kf = write(&p);
