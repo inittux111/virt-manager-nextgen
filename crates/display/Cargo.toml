@@ -1,0 +1,14 @@
+[package]
+name = "vmng-display"
+description = "Guest display (SPICE, VNC) and text console widgets for GTK4"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+gtk.workspace = true
+
+[lints]
+workspace = true

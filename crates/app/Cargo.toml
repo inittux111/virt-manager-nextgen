@@ -15,6 +15,7 @@ path = "src/main.rs"
 vmng-xml.workspace = true
 vmng-virt.workspace = true
 vmng-osinfo.workspace = true
+vmng-display.workspace = true
 gtk.workspace = true
 adw.workspace = true
 

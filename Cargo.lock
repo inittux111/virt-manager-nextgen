@@ -729,6 +729,7 @@ version = "0.1.0"
 dependencies = [
  "gtk4",
  "libadwaita",
+ "vmng-display",
  "vmng-osinfo",
  "vmng-virt",
  "vmng-xml",
@@ -742,6 +743,13 @@ checksum = "8762dc8eb11b230e7ed6c94152910f8382a128eed861af21047a203e3e2ebb00"
 dependencies = [
  "libc",
  "pkg-config",
+]
+
+[[package]]
+name = "vmng-display"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xml", "crates/virt", "crates/osinfo", "crates/app"]
+members = ["crates/xml", "crates/virt", "crates/osinfo", "crates/display", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,7 @@ repository = "https://github.com/inittux111/virt-manager-nextgen"
 vmng-xml = { path = "crates/xml" }
 vmng-virt = { path = "crates/virt" }
 vmng-osinfo = { path = "crates/osinfo" }
+vmng-display = { path = "crates/display" }
 # GTK4 + libadwaita: the required UI toolkit.
 gtk = { package = "gtk4", version = "0.11", features = ["v4_20"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_8"] }
