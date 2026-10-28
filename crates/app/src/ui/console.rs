@@ -278,6 +278,20 @@ impl ConsoleWindow {
         stack.add_named(&screen_scroller, Some("screen"));
         stack.add_named(&term_frame, Some("text"));
         stack.add_named(&error_page, Some("error"));
+        // Shown instead of connecting when "Connect automatically" is off.
+        let connect_now = gtk::Button::builder()
+            .label("Connect")
+            .action_name("console.reconnect")
+            .halign(gtk::Align::Center)
+            .css_classes(["pill", "suggested-action"])
+            .build();
+        let ready_page = adw::StatusPage::builder()
+            .icon_name("video-display-symbolic")
+            .title("Not connected yet")
+            .description("Connect to see the machine's screen.")
+            .child(&connect_now)
+            .build();
+        stack.add_named(&ready_page, Some("ready"));
         stack.add_named(&off_page, Some("off"));
 
         // In fullscreen the toolbar and caption hide themselves and come
@@ -529,7 +543,7 @@ impl ConsoleWindow {
         }
         self.update_header(vm);
         if !same || !self.state.borrow().connected {
-            self.connect();
+            self.connect_or_wait();
         }
     }
 
@@ -545,8 +559,8 @@ impl ConsoleWindow {
             self.stack.set_visible_child_name("off");
             self.update_caption();
         } else if !was_active {
-            // It was started from here: connect now.
-            self.connect();
+            // It was started (from here or elsewhere).
+            self.connect_or_wait();
         }
     }
 
@@ -580,6 +594,18 @@ impl ConsoleWindow {
             self.fullscreen.set_active(false);
         }
         self.state.borrow_mut().vm = None;
+    }
+
+    /// Connects, or waits for the Connect button when "Connect
+    /// automatically" is off in Preferences.
+    fn connect_or_wait(self: &Rc<Self>) {
+        let active = self.state.borrow().vm.as_ref().is_some_and(|v| v.state.is_active());
+        if self.settings.get().console_autoconnect || !active {
+            self.connect();
+        } else {
+            self.disconnect();
+            self.stack.set_visible_child_name("ready");
+        }
     }
 
     fn connect(self: &Rc<Self>) {

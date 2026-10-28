@@ -44,6 +44,7 @@ struct Row {
 
 type ActionFn = Rc<dyn Fn(&str, PowerAction)>;
 type SelectFn = Rc<dyn Fn(Option<&str>)>;
+type OpenFn = Rc<dyn Fn(&str)>;
 
 /// The left column of the Machines view.
 pub struct VmList {
@@ -55,6 +56,7 @@ pub struct VmList {
     filter: Rc<RefCell<String>>,
     on_action: RefCell<Option<ActionFn>>,
     on_select: RefCell<Option<SelectFn>>,
+    on_open: RefCell<Option<OpenFn>>,
     host: HostSummary,
 }
 
@@ -106,6 +108,7 @@ impl VmList {
             filter: Rc::default(),
             on_action: RefCell::default(),
             on_select: RefCell::default(),
+            on_open: RefCell::default(),
             host,
         });
 
@@ -141,6 +144,11 @@ impl VmList {
 
     pub fn connect_selected(&self, f: impl Fn(Option<&str>) + 'static) {
         self.on_select.replace(Some(Rc::new(f)));
+    }
+
+    /// Called with a VM's UUID when it is double-clicked.
+    pub fn connect_double_clicked(&self, f: impl Fn(&str) + 'static) {
+        self.on_open.replace(Some(Rc::new(f)));
     }
 
     /// Called when the person clicks (or presses Enter on) a VM, as opposed
@@ -255,6 +263,20 @@ impl VmList {
                 menu.popup();
             }
         };
+        // Double-click opens the machine's console.
+        let double = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_PRIMARY).build();
+        let (weak, id) = (Rc::downgrade(self), uuid.to_owned());
+        double.connect_pressed(move |_, n_press, _, _| {
+            if n_press == 2
+                && let Some(this) = weak.upgrade()
+            {
+                let cb = this.on_open.borrow().clone();
+                if let Some(f) = cb {
+                    f(&id);
+                }
+            }
+        });
+        row.add_controller(double);
         let click = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_SECONDARY).build();
         let open = open_menu.clone();
         click.connect_pressed(move |g, _, x, y| {
