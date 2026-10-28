@@ -13,7 +13,8 @@ work="$top/work"
 # Cargo's cache stays in the container, never in the shared home directory.
 export CARGO_HOME=/opt/cargo
 
-rm -rf "$top"
+# Earlier packages in RPMS stay, so an older version can be reinstalled.
+rm -rf "$top/SOURCES" "$top/BUILD" "$top/SRPMS" "$work"
 mkdir -p "$top/SOURCES" "$work"
 
 # The code, exactly as committed.
@@ -25,4 +26,4 @@ tar -C "$work" -czf "$top/SOURCES/$name-$version-vendor.tar.gz" vendor
 
 rpmbuild -bb --define "_topdir $top" packaging/$name.spec
 rm -rf "$work"
-find "$top/RPMS" -name '*.rpm' -print
+find "$top/RPMS" -name "$name-$version-*.rpm" -print
