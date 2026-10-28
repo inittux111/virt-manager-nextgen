@@ -67,6 +67,7 @@ Other features
 - It should work with qemu-guest-agent in a guest os.
 - Follow the system theme: light/dark mode and the system accent color are applied automatically, and custom GTK themes installed on the system must work too
 - A compact host summary (CPU usage, memory used / total and by running VMs, default storage pool free space) is always visible below the VM list; clicking it opens the Host overview
+- Consistency: every screen follows the same patterns: the same layout, spacing, button placement (primary action in the same spot), wording, icons, dialogs and confirmation style. A new screen reuses existing building blocks rather than inventing its own look.
 - Colors (agreed design rules):
   - No own color scheme: all colors come from the active GTK theme (custom themes included)
   - Mostly neutral surfaces; the accent color is only used for the selected item, the one primary button per screen, and switches that are on
