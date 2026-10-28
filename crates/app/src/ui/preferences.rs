@@ -72,11 +72,17 @@ fn general_page(s: &Settings) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder().title("General").icon_name("preferences-system-symbolic").build();
 
     let features = group("Features");
-    let tray = switch(s, "System tray icon", "", |p| p.tray_icon, |p, v| p.tray_icon = v);
-    if !library_present(&["libayatana-appindicator3.so.1"]) {
-        tray.set_subtitle("Not available: AyatanaAppIndicator3 is not installed");
+    let tray = switch(
+        s,
+        "System tray icon",
+        "Closing the window keeps the app running in the tray",
+        |p| p.tray_icon,
+        |p, v| p.tray_icon = v,
+    );
+    let host = gtk::gio::Application::default().and_then(|a| a.dbus_connection());
+    if !host.as_ref().is_some_and(crate::tray::available) {
+        tray.set_subtitle("Not available: no tray is running (in GNOME, turn on the AppIndicator extension)");
         tray.set_sensitive(false);
-        tray.add_css_class("warning");
     }
     features.add(&tray);
     let guestfs = switch(

@@ -77,6 +77,7 @@ pub struct MainWindow {
     storage_view: Rc<super::storage_view::StorageView>,
     new_button: gtk::Button,
     new_label: adw::ButtonContent,
+    tray: RefCell<Option<crate::tray::Tray>>,
     actions: VmActions,
     job: JobBar,
     search_bar: gtk::SearchBar,
@@ -275,6 +276,7 @@ impl MainWindow {
             storage_view,
             new_button,
             new_label,
+            tray: RefCell::default(),
             actions,
             job,
             search_bar,
@@ -315,7 +317,18 @@ impl MainWindow {
         this.settings.connect_changed(move |_| {
             if let Some(this) = weak.upgrade() {
                 this.restart_timer();
+                this.update_tray();
             }
+        });
+        this.update_tray();
+        // With a tray icon, closing the window keeps the app running there.
+        let weak = Rc::downgrade(&this);
+        this.window.connect_close_request(move |w| {
+            if weak.upgrade().is_some_and(|this| this.tray.borrow().is_some()) {
+                w.set_visible(false);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
         });
         this
     }
@@ -707,6 +720,7 @@ impl MainWindow {
         if self.state.borrow().view == View::Host {
             self.update_host_view();
         }
+        self.update_tray_menu();
         {
             let st = self.state.borrow();
             self.vm_list.update_host(st.host_info.as_ref(), st.monitor.host());
@@ -970,6 +984,66 @@ impl MainWindow {
     fn set_view_later(&self, view: View) {
         // Called from a &self context; the window keeps an Rc via the actions.
         let _ = WidgetExt::activate_action(&self.window, "win.dev-view", Some(&view.id().to_variant()));
+    }
+
+    /// Shows or removes the tray icon to match Preferences.
+    fn update_tray(self: &Rc<Self>) {
+        let wanted = self.settings.get().tray_icon;
+        let conn = self.window.application().and_then(|a| a.dbus_connection());
+        let can = conn.as_ref().is_some_and(crate::tray::available);
+        if !(wanted && can) {
+            self.tray.replace(None);
+            return;
+        }
+        if self.tray.borrow().is_some() {
+            return;
+        }
+        let Some(conn) = conn else { return };
+        let weak = Rc::downgrade(self);
+        match crate::tray::Tray::new(&conn, "computer-symbolic", move |cmd| {
+            if let Some(this) = weak.upgrade() {
+                this.tray_command(cmd);
+            }
+        }) {
+            Ok(tray) => {
+                self.tray.replace(Some(tray));
+                self.update_tray_menu();
+            }
+            Err(e) => glib::g_warning!("tray", "couldn't create the tray icon: {e}"),
+        }
+    }
+
+    fn update_tray_menu(&self) {
+        let tray = self.tray.borrow();
+        let Some(tray) = tray.as_ref() else { return };
+        let vms: Vec<crate::tray::TrayVm> = self
+            .state
+            .borrow()
+            .domains
+            .iter()
+            .map(|d| crate::tray::TrayVm { uuid: d.uuid.clone(), name: d.display_name().to_owned(), state: d.state })
+            .collect();
+        tray.set_vms(&vms);
+    }
+
+    fn tray_command(self: &Rc<Self>, cmd: crate::tray::TrayCommand) {
+        use crate::tray::TrayCommand;
+        match cmd {
+            TrayCommand::ShowWindow => self.window.present(),
+            TrayCommand::Quit => {
+                if let Some(app) = self.window.application() {
+                    app.quit();
+                }
+            }
+            TrayCommand::Power(uuid, action) => self.request_power(uuid, action),
+            TrayCommand::Console(uuid) => {
+                self.window.present();
+                if let Some(vm) = self.vm_by_uuid(&uuid) {
+                    self.vm_list.select(&uuid);
+                    self.open_console(&vm);
+                }
+            }
+        }
     }
 
     fn vm_by_uuid(&self, uuid: &str) -> Option<DomainSummary> {

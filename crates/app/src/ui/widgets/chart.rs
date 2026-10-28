@@ -136,7 +136,11 @@ mod imp {
             // Labels: the scale's top value and the time span.
             let format = self.format.borrow();
             let top_label = format.as_ref().map_or_else(|| format!("{max:.0}"), |f| f(max));
-            for (text, x_right, y) in [(top_label, false, 0.0), (self.span.borrow().clone(), false, h - label_h), ("now".to_owned(), true, h - label_h)] {
+            for (text, x_right, y) in [
+                (top_label, false, 0.0),
+                (self.span.borrow().clone(), false, h - label_h),
+                ("now".to_owned(), true, h - label_h),
+            ] {
                 let layout = widget.create_pango_layout(Some(&text));
                 let (lw, _) = layout.pixel_size();
                 let x = if x_right { w - lw as f32 } else { 0.0 };

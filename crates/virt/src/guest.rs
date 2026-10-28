@@ -43,7 +43,8 @@ impl GuestInfo {
             Some(ParamValue::Num(v)) => Some(*v),
             _ => None,
         };
-        let mut users: Vec<String> = (0..n("user.count").unwrap_or(0)).filter_map(|i| s(&format!("user.{i}.name"))).collect();
+        let mut users: Vec<String> =
+            (0..n("user.count").unwrap_or(0)).filter_map(|i| s(&format!("user.{i}.name"))).collect();
         users.sort();
         users.dedup();
         let filesystems = (0..n("fs.count").unwrap_or(0))
