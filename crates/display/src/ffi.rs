@@ -19,11 +19,6 @@ unsafe extern "C" {
     pub fn spice_channel_open_fd(channel: *mut GObject, fd: c_int) -> gboolean;
     pub fn spice_channel_connect(channel: *mut GObject) -> gboolean;
 
-    pub fn spice_display_channel_get_type() -> usize;
-    pub fn spice_inputs_channel_get_type() -> usize;
-    pub fn spice_main_channel_get_type() -> usize;
-    pub fn spice_cursor_channel_get_type() -> usize;
-
     pub fn spice_inputs_channel_position(
         channel: *mut GObject,
         x: c_int,
@@ -52,7 +47,6 @@ unsafe extern "C" {
         height: c_int,
         update: gboolean,
     );
-    pub fn spice_main_channel_send_monitor_config(channel: *mut GObject) -> gboolean;
 }
 
 /// `VncPixelFormat` from gvnc; the layout must match the C struct.
@@ -77,7 +71,6 @@ unsafe extern "C" {
     pub fn vnc_connection_open_fd(conn: *mut GObject, fd: c_int) -> gboolean;
     pub fn vnc_connection_shutdown(conn: *mut GObject);
     pub fn vnc_connection_set_auth_type(conn: *mut GObject, kind: c_uint) -> gboolean;
-    pub fn vnc_connection_set_credential(conn: *mut GObject, kind: c_int, data: *const c_char) -> gboolean;
     pub fn vnc_connection_set_encodings(conn: *mut GObject, n: c_int, encodings: *const i32) -> gboolean;
     pub fn vnc_connection_set_pixel_format(conn: *mut GObject, fmt: *const VncPixelFormat) -> gboolean;
     pub fn vnc_connection_get_pixel_format(conn: *mut GObject) -> *const VncPixelFormat;
@@ -92,7 +85,6 @@ unsafe extern "C" {
     ) -> gboolean;
     pub fn vnc_connection_get_width(conn: *mut GObject) -> c_int;
     pub fn vnc_connection_get_height(conn: *mut GObject) -> c_int;
-    pub fn vnc_connection_get_ext_key_event(conn: *mut GObject) -> gboolean;
     pub fn vnc_connection_key_event(conn: *mut GObject, down: gboolean, key: u32, scancode: u16) -> gboolean;
     pub fn vnc_connection_pointer_event(conn: *mut GObject, mask: u8, x: u16, y: u16) -> gboolean;
     pub fn vnc_connection_set_size(conn: *mut GObject, width: c_uint, height: c_uint) -> c_int;

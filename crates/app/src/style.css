@@ -165,3 +165,16 @@ sparkline.inactive { color: alpha(currentColor, 0.25); }
 }
 .nav-heading { margin: 12px 8px 4px 8px; }
 .xml-view { font-size: 0.9em; }
+
+/* ── Console ─────────────────────────────────────────────────────────── */
+
+/* The guest picture sits on a dark surround in every theme, like a
+ * monitor; the shade is derived from the theme's own background. */
+.console-area { background-color: color-mix(in srgb, var(--window-bg-color) 18%, black); }
+.console-area > stack > statuspage,
+.console-area > stack > box { color: color-mix(in srgb, var(--window-bg-color) 12%, white); }
+guest-screen:focus-visible { outline: none; }
+.console-toolbar { padding: 4px; border-radius: 999px; }
+.console-toolbar separator { margin: 6px 4px; }
+.console-caption { padding: 4px 10px; border-radius: 8px; }
+.console-terminal { padding: 64px 12px 12px 12px; }
