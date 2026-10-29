@@ -23,8 +23,8 @@ impl Rng {
         (self.next() % n as u64) as usize
     }
 
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
-        &items[self.below(items.len())]
+    fn pick<T: Copy>(&mut self, items: &[T]) -> T {
+        items[self.below(items.len())]
     }
 }
 
@@ -122,13 +122,13 @@ fn mutate(rng: &mut Rng, doc: &str) -> String {
     let mut s = doc.to_owned();
     for _ in 0..=rng.below(4) {
         let boundaries: Vec<usize> = (0..=s.len()).filter(|&i| s.is_char_boundary(i)).collect();
-        let at = *rng.pick(&boundaries);
-        let to = *rng.pick(&boundaries);
+        let at = rng.pick(&boundaries);
+        let to = rng.pick(&boundaries);
         let (a, b) = (at.min(to), at.max(to));
         // Ranges of at most `n` bytes, ending on a character boundary.
         let upto = |n: usize| boundaries.iter().copied().rfind(|&i| i <= b.min(a + n)).unwrap_or(a);
         match rng.below(6) {
-            0 => s.insert_str(at, *rng.pick(TOKENS)),
+            0 => s.insert_str(at, rng.pick(TOKENS)),
             1 => s.replace_range(a..upto(16), ""),
             2 => s.truncate(at),
             3 => {
@@ -137,7 +137,7 @@ fn mutate(rng: &mut Rng, doc: &str) -> String {
             }
             4 => {
                 if let Some(c) = s[at..].chars().next() {
-                    s.replace_range(at..at + c.len_utf8(), *rng.pick(TOKENS));
+                    s.replace_range(at..at + c.len_utf8(), rng.pick(TOKENS));
                 }
             }
             _ => {
@@ -180,7 +180,7 @@ fn random_bytes_never_panic() {
         let len = rng.below(200);
         let bytes: Vec<u8> = (0..len)
             .map(|_| match rng.below(4) {
-                0 => *rng.pick(b"<>/='\"&;!?[]- \n#x"),
+                0 => rng.pick(b"<>/='\"&;!?[]- \n#x"),
                 _ => rng.next() as u8,
             })
             .collect();
@@ -218,12 +218,12 @@ fn nasty_text(rng: &mut Rng) -> String {
         "a b",
         "=",
     ];
-    (0..rng.below(6)).map(|_| *rng.pick(PARTS)).collect()
+    (0..rng.below(6)).map(|_| rng.pick(PARTS)).collect()
 }
 
 fn random_element(rng: &mut Rng, depth: usize) -> Element {
     const NAMES: &[&str] = &["domain", "devices", "disk", "a", "x:y", "qemu:arg", "_n", "n-1.b", "é"];
-    let mut el = Element::new(*rng.pick(NAMES));
+    let mut el = Element::new(rng.pick(NAMES));
     for i in 0..rng.below(3) {
         el.set_attr(&format!("{}{i}", rng.pick(NAMES)), nasty_text(rng));
     }
