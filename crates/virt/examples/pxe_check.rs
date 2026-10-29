@@ -14,11 +14,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     vmng_virt::init();
     let uri = std::env::var("VMNG_TEST_URI").unwrap_or_else(|_| "qemu:///session".into());
     let conn = Connection::open(ConnectionKind::from_uri(&uri))?;
-    // The session has user networking; the system its default network.
-    let network = match conn.kind() {
-        ConnectionKind::Session => NetworkChoice::User,
-        _ => NetworkChoice::Network("default".into()),
-    };
+    // User-mode networking works on any connection, without a virtual
+    // network having to be active.
+    let network = NetworkChoice::User;
     let vm = NewVm {
         name: "vmng-test-pxe".into(),
         os_id: None,

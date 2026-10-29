@@ -90,7 +90,7 @@ done
 tree=https://deb.debian.org/debian/dists/trixie/
 check screen-new-vm-network screen new-vm-network VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_URL=$tree
 check network-install screen network-install VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_URL=$tree \
-    VMNG_DEV_WIZARD_STEP=3 VMNG_DEV_WIZARD_CREATE=vmng-test-netinst VMNG_SCREENSHOT_DELAY=60
+    VMNG_DEV_WIZARD_STEP=3 VMNG_DEV_WIZARD_CREATE=vmng-test-netinst VMNG_SCREENSHOT_DELAY=45
 check network-install-boots-installer-once sh -c "virsh -c '$VM_URI' dumpxml vmng-test-netinst | grep -q '<kernel>' \
     && ! virsh -c '$VM_URI' dumpxml --inactive vmng-test-netinst | grep -q '<kernel>'"
 virsh -c "$VM_URI" destroy vmng-test-netinst >"$OUT/network-install-cleanup.log" 2>&1
