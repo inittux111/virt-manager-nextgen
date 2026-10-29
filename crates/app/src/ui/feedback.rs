@@ -29,6 +29,7 @@ impl Feedback {
         // Debug builds: unattended test runs see the error in the log.
         #[cfg(debug_assertions)]
         eprintln!("error: {title}: {details}");
+        crate::log::write("error", &format!("{title}: {details}"));
         let toast =
             adw::Toast::builder().title(glib::markup_escape_text(title)).button_label("Details").timeout(8).build();
         let parent = self.parent.clone();

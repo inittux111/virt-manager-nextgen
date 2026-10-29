@@ -50,6 +50,10 @@ jobs:
         run: cargo test -p vmng-virt --test regressions
       - name: Build
         run: cargo build --workspace --all-targets
+      - name: Every VMNG_ variable is documented in DEVELOPING.md
+        run: |
+          missing=$(grep -rhoE '"VMNG_[A-Z0-9_]+"' crates | tr -d '"' | sort -u | while read -r v; do grep -q "$v" DEVELOPING.md || echo "$v"; done)
+          [ -z "$missing" ] || { echo "Not in DEVELOPING.md:" $missing; exit 1; }
       - name: App metadata
         run: |
           desktop-file-validate data/*.desktop
@@ -87,3 +91,10 @@ jobs:
         run: cargo test -p vmng-virt --test regressions
       - name: Build
         run: cargo build --workspace --all-targets --no-default-features
+      # Keeps Cargo.toml's rust-version true. When a crate update needs a
+      # newer Rust, raise it there and in packaging/virt-manager-nextgen.spec.
+      - name: Minimum Rust version
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal
+          cargo +"$msrv" check --workspace --all-targets --no-default-features --locked

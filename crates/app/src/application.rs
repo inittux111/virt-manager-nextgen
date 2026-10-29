@@ -119,6 +119,8 @@ fn setup_actions(app: &adw::Application, settings: &Settings) {
             .issue_url(format!("{}/issues", config::WEBSITE))
             .license_type(gtk::License::Gpl30)
             .comments("Manage QEMU/KVM virtual machines through libvirt.")
+            .debug_info(crate::log::report())
+            .debug_info_filename("virt-manager-nextgen-log.txt")
             .build();
         dialog.present(app.active_window().as_ref());
     });

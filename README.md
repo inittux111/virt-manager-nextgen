@@ -266,7 +266,9 @@ then need merging by hand).
 
 ## Testing: `./test-pipeline.sh`
 
-One command checks that every feature still works, on both systems:
+One command checks that every feature still works, on both systems
+(the separate checks and screenshot tools are described in
+[DEVELOPING.md](DEVELOPING.md)):
 
 ```sh
 ./test-pipeline.sh            # Fedora 44 and Debian 13
@@ -429,6 +431,14 @@ graphics card. It works on the **User session** connection. On the
 graphics drivers (such as NVIDIA's own) aren't allowed to run in; the machine
 then doesn't start, and the app says so. Turn 3D acceleration off for that
 machine, or run it on the User session.
+
+### When something goes wrong
+
+The app keeps a small log of failed operations, warnings and crashes in
+`~/.local/state/virt-manager-nextgen/app.log`. Main menu → About →
+Troubleshooting shows the app's version and the end of that log, with
+buttons to copy or save it, which is what a bug report needs. The log stays
+on your computer and only your user can read it.
 
 ## License
 

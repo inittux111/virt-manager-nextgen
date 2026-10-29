@@ -128,7 +128,7 @@ fn mutate(rng: &mut Rng, doc: &str) -> String {
         // Ranges of at most `n` bytes, ending on a character boundary.
         let upto = |n: usize| boundaries.iter().copied().rfind(|&i| i <= b.min(a + n)).unwrap_or(a);
         match rng.below(6) {
-            0 => s.insert_str(at, rng.pick(TOKENS)),
+            0 => s.insert_str(at, *rng.pick(TOKENS)),
             1 => s.replace_range(a..upto(16), ""),
             2 => s.truncate(at),
             3 => {
@@ -137,7 +137,7 @@ fn mutate(rng: &mut Rng, doc: &str) -> String {
             }
             4 => {
                 if let Some(c) = s[at..].chars().next() {
-                    s.replace_range(at..at + c.len_utf8(), rng.pick(TOKENS));
+                    s.replace_range(at..at + c.len_utf8(), *rng.pick(TOKENS));
                 }
             }
             _ => {
