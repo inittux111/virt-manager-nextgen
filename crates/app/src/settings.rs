@@ -316,6 +316,24 @@ mod tests {
     }
 
     #[test]
+    fn bad_values_fall_back_or_are_clamped() {
+        let kf = glib::KeyFile::new();
+        kf.load_from_data(
+            "[stats]\ninterval=-5\ncpu=maybe\n[window]\nwidth=99999999\nheight=abc\n\
+             [console]\nscaling=sideways\n[general]\nappearance=purple\n",
+            glib::KeyFileFlags::NONE,
+        )
+        .unwrap();
+        let p = read(&kf);
+        let d = Prefs::default();
+        assert_eq!(p.stats_interval_secs, 1);
+        assert_eq!(p.stats_cpu, d.stats_cpu);
+        assert_eq!((p.window_width, p.window_height), (16384, d.window_height));
+        assert_eq!(p.console_scaling, d.console_scaling);
+        assert_eq!(p.appearance, d.appearance);
+    }
+
+    #[test]
     fn empty_file_gives_defaults() {
         assert_eq!(read(&glib::KeyFile::new()), Prefs::default());
     }

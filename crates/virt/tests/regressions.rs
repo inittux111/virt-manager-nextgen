@@ -94,3 +94,20 @@ fn tunnel_goes_to_a_reachable_address() {
     let d = xml("<domain><devices><graphics type='vnc' port='5900' listen='0.0.0.0'/></devices></domain>");
     assert_eq!(display_address(&d, 0).as_deref(), Some("127.0.0.1:5900"));
 }
+
+/// 1.0.0: a comment holding "----->" was written as "<!--- -- -->-->", so
+/// it ended early and the rest became part of the document; a trailing '-'
+/// gave "--->", which libvirt rejects. (Found by crates/xml/tests/fuzz.rs.)
+/// The VNC/SPICE size overflow found in the same review is guarded in
+/// vmng-display (`screen::tests::pixel_bytes_rejects_bad_sizes`).
+#[test]
+fn comments_are_written_as_valid_xml() {
+    for text in ["----->", "a-", "x --><evil/><!--"] {
+        let mut d = Element::new("domain").with_child(Element::new("name").with_text("n"));
+        d.children.push(Node::Comment(text.into()));
+        let written = d.to_xml();
+        let body = written.split("<!--").nth(1).and_then(|c| c.split("-->").next()).unwrap();
+        assert!(!body.contains("--") && !body.ends_with('-'), "{written}");
+        assert_eq!(xml(&written).elements().count(), 1, "{written}");
+    }
+}

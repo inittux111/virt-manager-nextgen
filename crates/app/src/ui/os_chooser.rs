@@ -89,7 +89,7 @@ pub fn choose_os(parent: &impl IsA<gtk::Widget>, initial_query: &str, chosen: im
                     sub.push(v.clone());
                 }
                 if let Some(d) = &os.release_date {
-                    sub.push(format!("released {}", &d[..4.min(d.len())]));
+                    sub.push(format!("released {}", d.get(..4).unwrap_or(d)));
                 }
                 let row = adw::ActionRow::builder().title(&os.name).subtitle(sub.join(" · ")).activatable(true).build();
                 row.add_prefix(&logo);

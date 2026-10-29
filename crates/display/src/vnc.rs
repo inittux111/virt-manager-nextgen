@@ -14,7 +14,7 @@ use gtk::prelude::*;
 use crate::Status;
 use crate::ffi::{self, VncPixelFormat};
 use crate::keymap;
-use crate::screen::{Backend, Button, GuestScreen, Source, cursor_from_rgba};
+use crate::screen::{Backend, Button, GuestScreen, Source, cursor_from_rgba, pixel_bytes};
 
 const AUTH_NONE: u32 = 1;
 const AUTH_VNC: u32 = 2;
@@ -155,8 +155,8 @@ impl VncBackend {
                         let (w, h) =
                             (i32::from(ffi::vnc_cursor_get_width(c)), i32::from(ffi::vnc_cursor_get_height(c)));
                         let data = ffi::vnc_cursor_get_data(c);
-                        (!data.is_null() && w > 0 && h > 0).then(|| {
-                            let pixels = std::slice::from_raw_parts(data, (w * h * 4) as usize);
+                        pixel_bytes(w, h).filter(|_| !data.is_null()).map(|len| {
+                            let pixels = std::slice::from_raw_parts(data, len);
                             cursor_from_rgba(
                                 pixels,
                                 w,
@@ -200,13 +200,15 @@ impl VncBackend {
         }
         // Servers announce the size again during the first update; keep the
         // picture already drawn if nothing changed.
-        let same = self.framebuffer.borrow().as_ref().is_some_and(|f| f.pixels.len() == (w * 4 * h) as usize)
+        // Checked: the 32-bit product of a large size would overflow.
+        let Some(len) = pixel_bytes(w, h) else { return };
+        let same = self.framebuffer.borrow().as_ref().is_some_and(|f| f.pixels.len() == len)
             && self.screen.upgrade().and_then(|s| s.guest_size()) == Some((w, h));
         if same {
             return;
         }
         let stride = w * 4;
-        let mut pixels = vec![0u8; (stride * h) as usize].into_boxed_slice();
+        let mut pixels = vec![0u8; len].into_boxed_slice();
         // SAFETY: `pixels` outlives the framebuffer object (both live in
         // `self.framebuffer`, replaced together); formats are copied.
         let object = unsafe {

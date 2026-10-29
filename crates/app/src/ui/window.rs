@@ -1744,3 +1744,25 @@ fn start_hint(details: &str) -> Option<&'static str> {
          drivers (such as NVIDIA's own) aren't allowed to run inside the virtual machine's process.",
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_ids_round_trip() {
+        for kind in [
+            ConnectionKind::System,
+            ConnectionKind::Session,
+            ConnectionKind::Other("qemu+ssh://me@server/system".into()),
+        ] {
+            assert_eq!(connection_of(&connection_id(&kind)), kind);
+        }
+    }
+
+    #[test]
+    fn start_failures_get_advice_only_when_known() {
+        assert!(start_hint("qemu: egl: no drm render node available").is_some());
+        assert!(start_hint("Requested operation is not valid: network 'default' is not active").is_none());
+    }
+}

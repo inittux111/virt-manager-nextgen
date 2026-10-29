@@ -85,8 +85,17 @@ fn write_inline(out: &mut String, n: &Node) {
             out.push_str("]]>");
         }
         Node::Comment(t) => {
+            // "--" may not appear in a comment, nor a '-' right before the
+            // closing "-->". One pass of replace leaves "--" in "---".
+            let mut t = t.clone();
+            while t.contains("--") {
+                t = t.replace("--", "- -");
+            }
+            if t.ends_with('-') {
+                t.push(' ');
+            }
             out.push_str("<!--");
-            out.push_str(&t.replace("--", "- -"));
+            out.push_str(&t);
             out.push_str("-->");
         }
         Node::Element(e) => write_element(out, e, 0),

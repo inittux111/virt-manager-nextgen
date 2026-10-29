@@ -80,7 +80,7 @@ The app's building blocks come from three places:
 - **The build tools** live in the toolbox container.
 
 About once a month, or when GitHub emails you a **Dependabot alert** (they
-are switched on for this repository, which stays private), run:
+are switched on for this repository), run:
 
 ```sh
 ./maintenance.sh

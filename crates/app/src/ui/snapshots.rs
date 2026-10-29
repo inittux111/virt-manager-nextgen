@@ -634,3 +634,20 @@ fn timeline_row(
     row.update_property(&[gtk::accessible::Property::Label(&format!("{title}, {meta}"))]);
     row
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_files_stay_in_the_cache_folder() {
+        let dir = glib::user_cache_dir().join("virt-manager-nextgen").join("snapshot-screens").join("uuid-1");
+        for name in ["Before update", "../../../etc/passwd", "/abs", "a/b", ".", "", "é\u{0}"] {
+            let path = screen_file("uuid-1", name);
+            assert_eq!(path.parent(), Some(dir.as_path()), "{name:?}");
+            let file = path.file_name().unwrap().to_str().unwrap();
+            assert!(file.ends_with(".png") && file[..file.len() - 4].bytes().all(|b| b.is_ascii_hexdigit()));
+        }
+        assert_ne!(screen_file("u", "a"), screen_file("u", "b"));
+    }
+}

@@ -14,7 +14,7 @@ use gtk::prelude::*;
 
 use crate::ffi;
 use crate::keymap;
-use crate::screen::{Backend, Button, GuestScreen, Source, cursor_from_rgba};
+use crate::screen::{Backend, Button, GuestScreen, Source, cursor_from_rgba, pixel_bytes};
 use crate::{FdProvider, Status};
 
 // SpiceChannelEvent
@@ -302,8 +302,9 @@ impl SpiceBackend {
             let v: Vec<i32> = (1..=4).filter_map(|i| args[i].get::<i32>().ok()).collect();
             let rgba = args[5].get::<glib::Pointer>().ok()?;
             if let (&[w, h, hx, hy], false) = (&v[..], rgba.is_null()) {
+                let len = pixel_bytes(w, h)?;
                 // SAFETY: spice passes `w * h` RGBA pixels valid during the signal.
-                let data = unsafe { std::slice::from_raw_parts(rgba as *const u8, (w.max(0) * h.max(0) * 4) as usize) };
+                let data = unsafe { std::slice::from_raw_parts(rgba as *const u8, len) };
                 s.set_guest_cursor(cursor_from_rgba(data, w, h, hx, hy).as_ref());
             }
             None

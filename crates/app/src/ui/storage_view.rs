@@ -752,3 +752,34 @@ impl StorageView {
         form.present(parent);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vmng_virt::{DomainConfig, DomainState};
+
+    fn vm(xml: &str) -> DomainSummary {
+        DomainSummary {
+            uuid: "u".into(),
+            state: DomainState::ShutOff,
+            persistent: true,
+            autostart: false,
+            has_managed_save: false,
+            config: DomainConfig::from_xml(&vmng_xml::parse(xml).unwrap()),
+        }
+    }
+
+    #[test]
+    fn finds_the_machines_using_a_volume() {
+        let a = vm("<domain><name>a</name><title>Alpha</title><devices>\
+                    <disk device='disk'><source file='/img/a.qcow2'/><target dev='vda'/></disk></devices></domain>");
+        let b = vm("<domain><name>b</name><os><nvram>/nv/b_VARS.fd</nvram></os><devices>\
+                    <disk device='disk'><source file='/img/a.qcow2'/><target dev='vdb'/></disk></devices></domain>");
+        let c = vm("<domain><name>c</name><devices><disk device='cdrom'><target dev='sda'/></disk></devices></domain>");
+        let all = [a, b, c];
+        assert_eq!(users_of("/img/a.qcow2", &all), ["Alpha", "b"]);
+        assert_eq!(users_of("/nv/b_VARS.fd", &all), ["b"]);
+        assert!(users_of("/img/a.qcow", &all).is_empty(), "whole paths only");
+        assert!(users_of("", &all).is_empty(), "an empty CD-ROM isn't a user");
+    }
+}

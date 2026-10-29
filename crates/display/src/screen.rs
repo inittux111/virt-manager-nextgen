@@ -77,6 +77,25 @@ pub struct Source {
     pub(crate) format: gdk::MemoryFormat,
 }
 
+/// Largest guest image side we accept (QEMU's displays stay well below).
+const MAX_SIDE: usize = 16384;
+
+/// Bytes in a `width` × `height` image of 4-byte pixels; `None` when a
+/// side is not positive or larger than [`MAX_SIDE`]. Sizes come from the
+/// display server, so they are never multiplied unchecked.
+pub(crate) fn pixel_bytes(width: i32, height: i32) -> Option<usize> {
+    let side = |n: i32| usize::try_from(n).ok().filter(|n| (1..=MAX_SIDE).contains(n));
+    Some(side(width)? * side(height)? * 4)
+}
+
+/// Length of an image with `height` rows `stride` bytes apart, each row
+/// holding `width` 4-byte pixels; `None` if the layout is invalid.
+pub(crate) fn image_bytes(width: i32, height: i32, stride: i32) -> Option<usize> {
+    let row = pixel_bytes(width, 1)?;
+    let stride = usize::try_from(stride).ok().filter(|&s| s >= row)?;
+    stride.checked_mul(usize::try_from(height).ok().filter(|&h| h > 0)?).filter(|&n| isize::try_from(n).is_ok())
+}
+
 type GrabFn = Box<dyn Fn(bool)>;
 type SizeFn = Box<dyn Fn(i32, i32)>;
 
@@ -201,10 +220,10 @@ mod imp {
         fn update_texture(&self) {
             let Some(region) = self.dirty.borrow_mut().take() else { return };
             let Some(src) = self.source.get() else { return };
-            if src.data.is_null() || src.width <= 0 || src.height <= 0 {
+            if src.data.is_null() {
                 return;
             }
-            let len = src.stride as usize * src.height as usize;
+            let Some(len) = image_bytes(src.width, src.height, src.stride) else { return };
             // SAFETY: the backend guarantees `data` points at `stride *
             // height` readable bytes until it clears the source, and it
             // only changes them on the main thread (where we run).
@@ -214,7 +233,7 @@ mod imp {
                 .set_bytes(Some(&bytes))
                 .set_width(src.width)
                 .set_height(src.height)
-                .set_stride(src.stride as usize)
+                .set_stride(len / src.height as usize)
                 .set_format(src.format);
             if let Some(prev) = previous.filter(|p| p.width() == src.width && p.height() == src.height) {
                 builder = builder.set_update_texture(Some(&prev)).set_update_region(Some(&region));
@@ -532,10 +551,34 @@ pub fn parse_keys(spec: &str) -> Vec<u32> {
 
 /// A cursor from straight (non-premultiplied) RGBA pixels.
 pub(crate) fn cursor_from_rgba(data: &[u8], width: i32, height: i32, hot_x: i32, hot_y: i32) -> Option<gdk::Cursor> {
-    if width <= 0 || height <= 0 || data.len() < (width * height * 4) as usize {
-        return None;
-    }
-    let bytes = glib::Bytes::from(&data[..(width * height * 4) as usize]);
-    let texture = gdk::MemoryTexture::new(width, height, gdk::MemoryFormat::R8g8b8a8, &bytes, (width * 4) as usize);
+    let len = pixel_bytes(width, height).filter(|&n| n <= data.len())?;
+    let bytes = glib::Bytes::from(&data[..len]);
+    let texture = gdk::MemoryTexture::new(width, height, gdk::MemoryFormat::R8g8b8a8, &bytes, len / height as usize);
     Some(gdk::Cursor::from_texture(&texture, hot_x, hot_y, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pixel_bytes_rejects_bad_sizes() {
+        assert_eq!(pixel_bytes(1024, 768), Some(1024 * 768 * 4));
+        assert_eq!(pixel_bytes(0, 10), None);
+        assert_eq!(pixel_bytes(-5, 10), None);
+        assert_eq!(pixel_bytes(16384, 16384), Some(16384 * 16384 * 4));
+        // Regression: 65535 × 65535 × 4 overflowed the 32-bit product, so a
+        // VNC framebuffer was allocated smaller than what gvnc writes.
+        assert_eq!(pixel_bytes(65535, 65535), None);
+        assert_eq!(pixel_bytes(i32::MAX, i32::MAX), None);
+    }
+
+    #[test]
+    fn image_bytes_checks_the_stride() {
+        assert_eq!(image_bytes(100, 10, 400), Some(4000));
+        assert_eq!(image_bytes(100, 10, 512), Some(5120));
+        assert_eq!(image_bytes(100, 10, 399), None, "rows would overlap");
+        assert_eq!(image_bytes(100, 10, -400), None);
+        assert_eq!(image_bytes(100, 0, 400), None);
+    }
 }
