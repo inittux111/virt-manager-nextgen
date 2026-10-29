@@ -1,27 +1,114 @@
 # Virtual Machines
 
-A modern desktop app for QEMU/KVM virtual machines, through libvirt: a
-GNOME-style alternative to virt-manager, written in Rust with GTK 4 and
-libadwaita.
+virt-manager-nextgen is a new, modern desktop app for QEMU/KVM virtual
+machines, built as a personal-use project with
+[virt-manager](https://virt-manager.org) as its inspiration. It has almost
+all of virt-manager's features, in a GNOME-style app written in Rust with
+GTK 4 and libadwaita. In the app menu and app grid it is called "Virtual
+Machines". It works with libvirt, like virt-manager, so both apps see the
+same machines.
 
-- Create machines from installer images or a network install tree (Fedora,
-  RHEL-like, openSUSE, Debian), with the operating system detected
-  automatically (libosinfo), or boot them from the network (PXE)
-- Start, pause, shut down, clone and delete machines, and take snapshots
-  (inside the disk or as separate files, with a picture of the screen)
-- Each machine's screen (SPICE or VNC) or text console in its own window
-- Create machines on a new disk, an existing disk image, or no disk
-- Edit hardware: title and description, memory (also raised while
-  running), CPU model and layout (sockets, cores, threads), security
-  mitigations, 3D acceleration, BIOS, UEFI or a specific UEFI firmware
-  file, TPM 2.0 (Windows 11), the operating system type, disk options
-  (removable, detect zeroes, I/O mode), the MAC address and a direct
-  (macvtap) connection, shared folders (virtiofs or 9p, read-only)
-- Manage the host's virtual networks (also as XML) and storage pools
-  (fully allocated volumes, volumes based on another image)
-- Light, dark or the system's style (Preferences → General)
-- CPU, memory, disk and network graphs, and guest details through the
-  QEMU guest agent
+## Features
+
+Everything below is also in virt-manager.
+
+**Connections**
+- The local QEMU/KVM System connection and User session, connected at
+  startup if you choose
+
+**Creating machines**
+- Install from an installer image (ISO) or the computer's optical drive
+- Network install from an install tree address (Fedora, RHEL-like, openSUSE,
+  Debian), or network boot (PXE)
+- Import an existing disk image, or create a machine without an installer
+- The operating system is detected automatically (libosinfo), with its
+  recommended memory, CPUs and disk size
+- A new disk in any storage pool, an existing disk image, or no disk
+- BIOS, UEFI or a specific UEFI firmware file, Secure Boot, TPM 2.0
+  (Windows 11)
+- Changing the hardware before the installation starts
+
+**Managing machines**
+- Start, shut down, reboot, force off, reset, pause and resume
+- Save and stop (and discard the saved state)
+- Clone, rename and delete (choosing which disks to delete)
+- Snapshots: inside the disk or as separate files, with or without the
+  memory, with a picture of the screen; revert and delete
+
+**Hardware**
+- Title and description
+- CPU count, CPU model ("copy host CPU", similar to the host, or any model the
+  host can run), security mitigations, manual CPU layout (sockets, cores,
+  threads)
+- Current and maximum memory (raised while running), shared memory
+- Boot order, firmware, the operating system type
+- Disks: bus, cache mode, discard, detect zeroes, I/O mode, read-only,
+  shareable, removable, serial number
+- CD-ROM: change the disc, also while the machine runs
+- Network cards: virtual network, host bridge, direct connection (macvtap) or
+  user networking, model, MAC address, cable connected or not
+- Display (SPICE or VNC, with password), video model and 3D acceleration,
+  sound, input devices, USB and other controllers, serial ports and consoles,
+  channels (guest agent, SPICE agent), TPM, random number generator
+- Shared folders: virtiofs or 9p, read-only
+- Add and remove hardware, also while the machine runs where possible
+- View and edit the full XML
+
+**Console**
+- The screen (SPICE or VNC) or the text (serial) console, each machine in its
+  own window
+- Fullscreen, scaling, resizing the guest to the window, sending key
+  combinations (Ctrl+Alt+Del, Ctrl+Alt+F1…), screenshots
+
+**Host**
+- Host details and usage
+- Virtual networks: NAT, routed, isolated or bridge, IPv4/DHCP, IPv6, DNS
+  domain, start at boot, and the full XML
+- Storage pools: a folder, LVM volume group, NFS share or iSCSI target
+- Volumes: create (thin or fully allocated, or based on another image) and
+  delete
+
+**Other**
+- CPU, memory, disk and network graphs per machine and for the host
+- Guest details through the QEMU guest agent (IP addresses, hostname,
+  operating system, file systems)
+- System tray icon
+- Preferences: statistics, console behaviour, defaults for new machines,
+  confirmations, and a light, dark or system style
+
+### Not included
+
+virt-manager has these, but virt-manager-nextgen doesn't:
+
+- Connections to other computers (over SSH or TLS) and to other hypervisors
+  (Xen, LXC, bhyve and others): only this computer's QEMU/KVM
+- Moving a running machine to another computer (migration)
+- Passing a USB or PCI device of the host to a machine, USB redirection from
+  the console, and mediated devices (e.g. a share of a graphics card)
+- Starting a machine when the host boots (autostart)
+- Booting a machine straight from a kernel file (direct kernel boot)
+- Rarely used devices: parallel port, watchdog, smartcard, panic notifier,
+  VSOCK
+- More storage pool types: whole disks, ZFS, Ceph/RBD, Gluster, multipath and
+  SCSI host adapters
+- TPM 1.2, and passing the host's own TPM to a machine
+- Looking inside a machine's disks for installed applications (libguestfs);
+  guest details come from the QEMU guest agent instead
+
+## Use at your own risk
+
+virt-manager-nextgen is an independent project, built as a personal-use
+project. It isn't affiliated with, endorsed by or supported by the
+virt-manager, libvirt or QEMU projects or Red Hat.
+
+- It manages your virtual machines through libvirt, the same way
+  virt-manager does, but it is young and tested by one person. Changes it
+  makes (editing hardware or XML, deleting machines, disks or snapshots,
+  stopping networks) are real and some can't be undone, so keep backups of
+  machines that matter.
+- Changes in libvirt, QEMU or GNOME can break features until
+  virt-manager-nextgen is updated.
+- It comes with no warranty, as the GPL says: you use it at your own risk.
 
 The app needs **GTK 4.18 or newer and libadwaita 1.7 or newer** (Debian 13
 and newer, Fedora 44 and newer). With GTK 4.20 / libadwaita 1.8 it uses
