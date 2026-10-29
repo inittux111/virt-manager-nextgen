@@ -380,6 +380,15 @@ graphics drivers (such as NVIDIA's own) aren't allowed to run in; the machine
 then doesn't start, and the app says so. Turn 3D acceleration off for that
 machine, or run it on the User session.
 
+## Credits
+
+- **Maarten**: idea, design decisions, testing and project
+  owner
+- **Claude** (Anthropic's AI assistant, through
+  [Claude Code](https://claude.com/claude-code)): wrote the code, the tests
+  and the documentation with Maarten. Commits made this way carry a
+  `Co-Authored-By: Claude` line.
+
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
