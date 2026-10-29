@@ -42,6 +42,15 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-10-29">
+      <description>
+        <ul>
+          <li>Tests: PXE check with user networking; network install screenshot within the time limit</li>
+          <li>Network install and PXE in the New VM wizard</li>
+          <li>CPU layout and model, 3D acceleration, snapshot options, OS type change</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-10-28">
       <description>
         <ul>

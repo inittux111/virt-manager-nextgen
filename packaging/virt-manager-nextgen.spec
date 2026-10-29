@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.2.1
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -89,6 +89,11 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Thu Oct 29 2026 Maarten <github@feedmebits.nl> - 0.3.0-1
+- Tests: PXE check with user networking; network install screenshot within the time limit
+- Network install and PXE in the New VM wizard
+- CPU layout and model, 3D acceleration, snapshot options, OS type change
+
 * Wed Oct 28 2026 Maarten <github@feedmebits.nl> - 0.2.1-1
 - Browse for any disc image for a VM's CD-ROM drive
 
