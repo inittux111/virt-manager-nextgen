@@ -1,10 +1,11 @@
 # Virtual Machines
 
 virt-manager-nextgen is a new, modern desktop app for QEMU/KVM virtual
-machines, built as a personal-use project with
-[virt-manager](https://virt-manager.org) as its inspiration. It has almost
-all of virt-manager's features, in a GNOME-style app written in Rust with
-GTK 4 and libadwaita. In the app menu and app grid it is called "Virtual
+machines, built as a personal-use project and based on
+[virt-manager](https://virt-manager.org): the goal is a more modern-looking
+virt-manager with most of its features. It has almost all of them, in a
+GNOME-style app written from scratch in Rust with GTK 4 and libadwaita (it
+doesn't reuse virt-manager's code). In the app menu and app grid it is called "Virtual
 Machines". It works with libvirt, like virt-manager, so both apps see the
 same machines.
 
@@ -103,8 +104,10 @@ virt-manager has these, but virt-manager-nextgen doesn't:
 ## Use at your own risk
 
 virt-manager-nextgen is an independent project, built as a personal-use
-project. It isn't affiliated with, endorsed by or supported by the
-virt-manager, libvirt or QEMU projects or Red Hat.
+project. It is based on virt-manager, with the goal of a more modern-looking
+virt-manager with most of its features, but it isn't affiliated with,
+endorsed by or supported by the virt-manager, libvirt or QEMU projects or
+Red Hat.
 
 - It manages your virtual machines through libvirt, the same way
   virt-manager does, but it is young and tested by one person. Changes it
