@@ -84,6 +84,9 @@ struct State {
     kvm: Option<bool>,
     /// A screen preview is being captured.
     preview_busy: bool,
+    /// Machines running a network installer: it stops the machine at its
+    /// end, and they are started again to boot the installed system.
+    installing: std::collections::HashSet<String>,
 }
 
 pub struct MainWindow {
@@ -403,6 +406,7 @@ impl MainWindow {
                 pending_page: None,
                 kvm: None,
                 preview_busy: false,
+                installing: Default::default(),
             }),
         });
 
@@ -853,6 +857,7 @@ impl MainWindow {
             st.tick
         };
         let domains = self.state.borrow().domains.clone();
+        self.restart_finished_installs(&domains);
         self.vm_list.update(&domains);
         if self.state.borrow().view == View::Host {
             self.update_host_view();
@@ -1084,6 +1089,31 @@ impl MainWindow {
         dialog.present(Some(&self.window));
     }
 
+    /// A network installer stops its machine when it's done (the first
+    /// boot ran the installer's kernel); start it again from its disk.
+    fn restart_finished_installs(self: &Rc<Self>, domains: &[DomainSummary]) {
+        let finished: Vec<String> = {
+            let mut st = self.state.borrow_mut();
+            // A machine not listed yet (a poll from before it was made)
+            // is kept waiting.
+            let done: Vec<String> = st
+                .installing
+                .iter()
+                .filter(|u| domains.iter().any(|d| &d.uuid == *u && !d.state.is_active()))
+                .cloned()
+                .collect();
+            for u in &done {
+                st.installing.remove(u);
+            }
+            done
+        };
+        for uuid in finished {
+            let name = self.domain_name(&uuid);
+            self.feedback.toast(&format!("The installer of {name} finished; starting it from its disk"));
+            self.power(uuid, PowerAction::Start);
+        }
+    }
+
     fn power(self: &Rc<Self>, uuid: String, action: PowerAction) {
         let Some(conn) = self.current_conn() else { return };
         let name = self.domain_name(&uuid);
@@ -1171,10 +1201,14 @@ impl MainWindow {
             import,
         };
         let weak = Rc::downgrade(self);
-        super::new_vm::open(&self.window, ctx, move |uuid, customize| {
+        super::new_vm::open(&self.window, ctx, move |created, customize| {
             if let Some(this) = weak.upgrade() {
                 {
                     let mut st = this.state.borrow_mut();
+                    let uuid = created.uuid;
+                    if created.restart_after_install {
+                        st.installing.insert(uuid.clone());
+                    }
                     st.pending_select = Some(uuid.clone());
                     if customize {
                         st.pending_page = Some((uuid, VmTab::Hardware));

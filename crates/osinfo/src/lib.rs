@@ -187,6 +187,50 @@ impl OsDb {
     }
 }
 
+impl OsDb {
+    /// Reads a network install tree (its `.treeinfo`, fetched over the
+    /// network by libosinfo) and identifies its operating system. Trees
+    /// without a `.treeinfo` (e.g. Debian's) are an error here.
+    pub fn identify_tree(&self, url: &str) -> Result<InstallTree, Error> {
+        let loc = CString::new(url).map_err(|_| Error("invalid address".into()))?;
+        let mut err = ptr::null_mut();
+        // SAFETY: valid NUL-terminated URL, no cancellable, valid out pointer.
+        let tree = unsafe { ffi::osinfo_tree_create_from_location(loc.as_ptr(), ptr::null_mut(), &mut err) };
+        if let Some(e) = take_error(err) {
+            return Err(e);
+        }
+        let tree = NonNull::new(tree).ok_or_else(|| Error("no install tree at this address".into()))?;
+        // SAFETY: valid db and tree; identify fills in the tree's OS and,
+        // from the database, missing kernel and initrd paths. Getters
+        // return borrowed values owned by the tree or the db.
+        let out = unsafe {
+            ffi::osinfo_db_identify_tree(self.db.as_ptr(), tree.as_ptr());
+            let os = NonNull::new(ffi::osinfo_tree_get_os(tree.as_ptr()));
+            InstallTree {
+                url_argument: os.and_then(|o| opt_str(ffi::osinfo_os_get_kernel_url_argument(o.as_ptr()))),
+                os: os.map(|o| os_info(o.as_ptr())),
+                kernel: opt_str(ffi::osinfo_tree_get_kernel_path(tree.as_ptr())),
+                initrd: opt_str(ffi::osinfo_tree_get_initrd_path(tree.as_ptr())),
+            }
+        };
+        // SAFETY: we own the tree reference.
+        unsafe { ffi::g_object_unref(tree.as_ptr().cast()) };
+        Ok(out)
+    }
+}
+
+/// What a network install tree holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InstallTree {
+    pub os: Option<OsInfo>,
+    /// The installer's kernel and initrd, relative to the tree's address.
+    pub kernel: Option<String>,
+    pub initrd: Option<String>,
+    /// The kernel argument that tells the installer where the tree is
+    /// (e.g. `inst.repo` for Fedora).
+    pub url_argument: Option<String>,
+}
+
 impl Drop for OsDb {
     fn drop(&mut self) {
         // SAFETY: we own one reference to the loader, which owns the db.

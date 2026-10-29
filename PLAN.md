@@ -88,8 +88,19 @@ Done after the first round
 - The window remembers its size, maximized state, view and selected VM
 - Stricter GNOME look: a plain "+" button, standard header tabs (main window and VM page), connection choice in the main menu
 
+Done after the virt-manager comparison (0.3.0)
+- CPU: any CPU model the host runs, "copy host CPU", security mitigations, manual CPU layout (sockets, cores, threads)
+- 3D acceleration for VirtIO video (through an egl-headless display, shown by every console)
+- Snapshots: inside the disk or as separate files, a folder for the memory file, a picture of the screen
+- Changing a machine's operating system type
+- New VM: network install from an HTTP(S) install tree, and network boot (PXE)
+
+Still open from the comparison (the user decides later)
+- Title and description per VM; current vs maximum memory; shared folder read-only and virtiofs/9p; disk removable / detect zeroes / I/O mode; editable MAC address and macvtap; volume preallocation and backing files; choosing an existing disk or custom location in the New VM wizard
+- Not recommended for a desktop: direct kernel boot, rare devices (parallel, watchdog, smartcard, panic, vsock, mediated devices), more pool types, TPM 1.2 / passthrough
+
 Decided against (desktop use only)
-- USB host devices / USB redirection, PCI passthrough, remote hosts over SSH, migration
+- USB host devices / USB redirection, PCI passthrough, remote hosts over SSH, migration, libguestfs
 
 ## Autonomy 
 I don't know rust, so don't ask me about programming decisions, only ask me about features and when something needs to be tested. If you really need to ask something about rust or programming then explain it to me in easy to understand language so that with that information I can give you a good answer to help reach the end result software that I want to create.

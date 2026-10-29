@@ -2,19 +2,22 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use adw::prelude::*;
 use gtk::{gio, glib};
 use vmng_osinfo::OsInfo;
 use vmng_virt::{
-    DomainCaps, DomainSummary, FirmwareChoice, GuestFamily, HostCaps, HostInfo, InstallImage, InstallSource,
-    NetworkChoice, NetworkSummary, NewDisk, NewVm, PoolSummary, unique_name, validate_vm_name,
+    Created, DomainCaps, DomainSummary, FirmwareChoice, GuestFamily, HostCaps, HostInfo, InstallImage, InstallSource,
+    NetworkChoice, NetworkInstall, NetworkSummary, NewDisk, NewVm, PoolSummary, unique_name, validate_vm_name,
 };
 
 use super::feedback::Feedback;
 use super::os_chooser::choose_os;
 use super::widgets::{OsLogo, boxed_list, fact_row};
 use crate::backend::Conn;
+use crate::backend::net_install::{self, TreeInstaller};
 use crate::settings::Prefs;
 use crate::{format, osdb};
 
@@ -37,6 +40,7 @@ pub struct WizardContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Method {
     Media,
+    Network,
     Import,
     Manual,
 }
@@ -57,6 +61,9 @@ struct State {
     /// (label, path) of the installer choices in the combo row.
     media: Vec<(String, String)>,
     import_path: Option<String>,
+    /// The installer of the network install tree, once read.
+    tree: Option<TreeInstaller>,
+    tree_error: Option<String>,
     os: Option<OsInfo>,
     os_detected: bool,
     detecting: bool,
@@ -88,6 +95,11 @@ struct Wizard {
     media_row: adw::ComboRow,
     import_group: adw::PreferencesGroup,
     import_row: adw::ActionRow,
+    network_group: adw::PreferencesGroup,
+    tree_url: adw::EntryRow,
+    kernel_args: adw::EntryRow,
+    manual_group: adw::PreferencesGroup,
+    pxe: adw::SwitchRow,
     os_logo: OsLogo,
     os_title: gtk::Label,
     os_subtitle: gtk::Label,
@@ -118,7 +130,7 @@ struct Wizard {
     /// Set while values are changed by code, so handlers can tell them
     /// apart from changes the person made.
     updating: Cell<bool>,
-    on_created: Box<dyn Fn(String, bool)>,
+    on_created: Box<dyn Fn(Created, bool)>,
 }
 
 fn string_list(items: &[String]) -> gtk::StringList {
@@ -193,8 +205,8 @@ fn default_name(os: Option<&OsInfo>, domains: &[DomainSummary]) -> String {
     unique_name(&base, |n| domains.iter().any(|d| d.config.name == n))
 }
 
-/// Opens the wizard. `on_created(uuid, customize)` runs after creation.
-pub fn open(parent: &impl IsA<gtk::Widget>, ctx: WizardContext, on_created: impl Fn(String, bool) + 'static) {
+/// Opens the wizard. `on_created(created, customize)` runs after creation.
+pub fn open(parent: &impl IsA<gtk::Widget>, ctx: WizardContext, on_created: impl Fn(Created, bool) + 'static) {
     let w = Wizard::build(ctx, Box::new(on_created));
     // Everything inside holds weak references; the open dialog owns the
     // wizard until it closes.
@@ -207,7 +219,7 @@ pub fn open(parent: &impl IsA<gtk::Widget>, ctx: WizardContext, on_created: impl
 }
 
 impl Wizard {
-    fn build(ctx: WizardContext, on_created: Box<dyn Fn(String, bool)>) -> Rc<Self> {
+    fn build(ctx: WizardContext, on_created: Box<dyn Fn(Created, bool)>) -> Rc<Self> {
         // Step indicator.
         let indicator = gtk::Box::builder().spacing(6).css_classes(["step-indicator"]).build();
         let mut steps = Vec::new();
@@ -230,11 +242,13 @@ impl Wizard {
         let (install_page, install) = page("How do you want to install the operating system?");
         let cards = gtk::Box::builder().spacing(12).homogeneous(true).build();
         let media_card = method_card("media-optical-symbolic", "Local ISO or CD-ROM", "Boot an installer image");
+        let network_card = method_card("network-server-symbolic", "Network install", "From an HTTP(S) install tree");
         let import_card = method_card("drive-harddisk-symbolic", "Import existing disk", "Use a qcow2 or raw image");
         let manual_card = method_card("document-edit-symbolic", "Manual install", "Empty machine, set up later");
+        network_card.set_group(Some(&media_card));
         import_card.set_group(Some(&media_card));
         manual_card.set_group(Some(&media_card));
-        for c in [&media_card, &import_card, &manual_card] {
+        for c in [&media_card, &network_card, &import_card, &manual_card] {
             cards.append(c);
         }
         install.append(&cards);
@@ -255,6 +269,27 @@ impl Wizard {
             .build();
         import_group.add(&import_row);
         install.append(&import_group);
+
+        let tree_url = adw::EntryRow::builder().title("Install tree address").show_apply_button(true).build();
+        tree_url.set_input_purpose(gtk::InputPurpose::Url);
+        let kernel_args = adw::EntryRow::builder().title("Extra kernel options (optional)").build();
+        let network_group = adw::PreferencesGroup::builder()
+            .title("Network install")
+            .description(
+                "The address of a Fedora, RHEL-like, openSUSE or Debian install tree (…/os/ or …/dists/trixie/).",
+            )
+            .build();
+        network_group.add(&tree_url);
+        network_group.add(&kernel_args);
+        install.append(&network_group);
+
+        let pxe = adw::SwitchRow::builder()
+            .title("Boot from the network (PXE)")
+            .subtitle("Starts from a PXE server on the machine's network until a system is on the disk")
+            .build();
+        let manual_group = adw::PreferencesGroup::new();
+        manual_group.add(&pxe);
+        install.append(&manual_group);
 
         let os_logo = OsLogo::new(40);
         let os_title = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["heading"]).build();
@@ -414,6 +449,7 @@ impl Wizard {
             next_spinner,
             method_buttons: vec![
                 (Method::Media, media_card),
+                (Method::Network, network_card),
                 (Method::Import, import_card),
                 (Method::Manual, manual_card),
             ],
@@ -421,6 +457,11 @@ impl Wizard {
             media_row,
             import_group,
             import_row,
+            network_group,
+            tree_url,
+            kernel_args,
+            manual_group,
+            pxe,
             os_logo,
             os_title,
             os_subtitle,
@@ -486,6 +527,29 @@ impl Wizard {
                 && !w.updating.get()
             {
                 w.detect();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.tree_url.connect_apply(move |_| {
+            if let Some(w) = weak.upgrade() {
+                w.detect_tree();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.tree_url.connect_changed(move |_| {
+            if let Some(w) = weak.upgrade() {
+                // A new address has to be read again.
+                let stale = {
+                    let mut st = w.state.borrow_mut();
+                    let stale = st.tree.is_some() || st.tree_error.is_some();
+                    st.tree = None;
+                    st.tree_error = None;
+                    stale
+                };
+                if stale {
+                    w.show_os();
+                }
+                w.update_buttons();
             }
         });
         let weak = Rc::downgrade(self);
@@ -575,7 +639,13 @@ impl Wizard {
                     Ok(HostData {
                         caps: c.host_caps()?,
                         images: c.list_install_images().unwrap_or_default(),
-                        pools: c.list_pools()?.into_iter().map(|(p, _)| p).filter(|p| p.active).collect(),
+                        // Not the network installers' temporary pool.
+                        pools: c
+                            .list_pools()?
+                            .into_iter()
+                            .map(|(p, _)| p)
+                            .filter(|p| p.active && p.name != vmng_virt::BOOT_POOL)
+                            .collect(),
                         networks: c.list_networks().unwrap_or_default(),
                         bridges: c.list_bridges(),
                     })
@@ -687,6 +757,24 @@ impl Wizard {
         self.set_method(method);
         self.load_domain_caps();
         self.go(0);
+        // Debug builds: `VMNG_DEV_WIZARD_URL=<address>` reads a network
+        // install tree; `VMNG_DEV_WIZARD_PXE=1` picks Manual with PXE.
+        #[cfg(debug_assertions)]
+        {
+            let pick = |m: Method| {
+                if let Some((_, b)) = self.method_buttons.iter().find(|(x, _)| *x == m) {
+                    b.set_active(true);
+                }
+            };
+            if let Ok(url) = std::env::var("VMNG_DEV_WIZARD_URL") {
+                pick(Method::Network);
+                self.tree_url.set_text(&url);
+                self.detect_tree();
+            } else if std::env::var_os("VMNG_DEV_WIZARD_PXE").is_some() {
+                pick(Method::Manual);
+                self.pxe.set_active(true);
+            }
+        }
         #[cfg(debug_assertions)]
         if let Some(step) = std::env::var("VMNG_DEV_WIZARD_STEP").ok().and_then(|s| s.parse::<usize>().ok()) {
             let weak = Rc::downgrade(self);
@@ -701,7 +789,18 @@ impl Wizard {
                         w.name.set_text(&name);
                         let none = w.state.borrow().networks.len().saturating_sub(1);
                         w.network_row.set_selected(none as u32);
-                        w.advance();
+                        // A network install waits until its tree is read.
+                        let weak = Rc::downgrade(&w);
+                        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+                            let Some(w) = weak.upgrade() else { return glib::ControlFlow::Break };
+                            let st = w.state.borrow();
+                            if st.method == Some(Method::Network) && (st.detecting || st.tree.is_none()) {
+                                return glib::ControlFlow::Continue;
+                            }
+                            drop(st);
+                            w.advance();
+                            glib::ControlFlow::Break
+                        });
                     }
                 }
             });
@@ -782,8 +881,28 @@ impl Wizard {
         self.state.borrow_mut().method = Some(method);
         self.media_group.set_visible(method == Method::Media);
         self.import_group.set_visible(method == Method::Import);
+        self.network_group.set_visible(method == Method::Network);
+        self.manual_group.set_visible(method == Method::Manual);
+        self.update_firmware_rows();
+        // The network installer only runs when the machine starts now.
+        self.customize.set_sensitive(method != Method::Network);
+        if method == Method::Network {
+            self.customize.set_active(false);
+        }
         match method {
             Method::Media => self.detect(),
+            Method::Network if self.state.borrow().tree.is_some() => {}
+            Method::Network => {
+                {
+                    let mut st = self.state.borrow_mut();
+                    if st.os_detected {
+                        st.os = None;
+                        st.os_detected = false;
+                    }
+                    st.detecting = false;
+                }
+                self.show_os();
+            }
             _ => {
                 let mut st = self.state.borrow_mut();
                 if st.os_detected {
@@ -843,6 +962,61 @@ impl Wizard {
         });
     }
 
+    /// Reads the network install tree at the typed address.
+    fn detect_tree(self: &Rc<Self>) {
+        let url = self.tree_url.text().trim().to_owned();
+        if let Err(msg) = net_install::validate_url(&url) {
+            self.state.borrow_mut().tree_error = Some(msg.to_owned());
+            self.show_os();
+            self.update_buttons();
+            return;
+        }
+        let seq = {
+            let mut st = self.state.borrow_mut();
+            st.detect_seq += 1;
+            st.detecting = true;
+            st.tree = None;
+            st.tree_error = None;
+            st.detect_seq
+        };
+        self.show_os();
+        self.update_buttons();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = match osdb::identify_tree(url.clone()).await {
+                Ok(tree) => net_install::from_treeinfo(&url, &tree)
+                    .ok_or_else(|| "The install tree has no installer kernel for this architecture.".to_owned()),
+                // No .treeinfo: maybe a Debian mirror.
+                Err(e) => {
+                    net_install::debian(&url).ok_or_else(|| format!("This doesn't look like an install tree ({e})."))
+                }
+            };
+            let Some(w) = weak.upgrade() else { return };
+            let mut st = w.state.borrow_mut();
+            if st.detect_seq != seq {
+                return;
+            }
+            st.detecting = false;
+            match result {
+                Ok(tree) => {
+                    if let Some(os) = tree.os_id.as_deref().and_then(osdb::lookup) {
+                        st.os = Some(os.clone());
+                        st.os_detected = true;
+                    } else if st.os_detected {
+                        st.os = None;
+                        st.os_detected = false;
+                    }
+                    st.tree = Some(tree);
+                }
+                Err(e) => st.tree_error = Some(e),
+            }
+            drop(st);
+            w.show_os();
+            w.apply_os_defaults();
+            w.update_buttons();
+        });
+    }
+
     fn show_os(&self) {
         let st = self.state.borrow();
         self.os_spinner.set_visible(st.detecting);
@@ -850,7 +1024,11 @@ impl Wizard {
         if st.detecting {
             self.os_logo.set_logo(None);
             self.os_title.set_label("Detecting the operating system…");
-            self.os_subtitle.set_label("Reading the install media");
+            self.os_subtitle.set_label(if st.method == Some(Method::Network) {
+                "Reading the install tree"
+            } else {
+                "Reading the install media"
+            });
             self.os_button.set_label("Choose");
             return;
         }
@@ -858,7 +1036,9 @@ impl Wizard {
             Some(os) => {
                 self.os_logo.set_logo(osdb::logo_key(&os.id));
                 self.os_title.set_label(&os.name);
-                self.os_subtitle.set_label(if st.os_detected {
+                self.os_subtitle.set_label(if st.os_detected && st.method == Some(Method::Network) {
+                    "Detected automatically from the install tree"
+                } else if st.os_detected {
                     "Detected automatically from the install media"
                 } else {
                     "Chosen by you"
@@ -873,6 +1053,15 @@ impl Wizard {
                     }
                     Some(Method::Import) => {
                         ("Which operating system is on the disk?", "Choose it, so the machine gets the right settings")
+                    }
+                    Some(Method::Network) if st.tree_error.is_some() => {
+                        ("Couldn't read the install tree", st.tree_error.as_deref().unwrap_or_default())
+                    }
+                    Some(Method::Network) if st.tree.is_some() => {
+                        ("Couldn't detect the operating system", "Choose it, so the machine gets the right settings")
+                    }
+                    Some(Method::Network) => {
+                        ("Enter the install tree's address", "Then press Enter or the check mark to read it")
                     }
                     _ => ("Operating system", "Choose it, so the machine gets the right settings"),
                 };
@@ -1032,6 +1221,15 @@ impl Wizard {
 
     /// The firmware chosen in the dropdown (see `apply_os_defaults`).
     fn firmware_choice(&self) -> FirmwareChoice {
+        let choice = self.firmware_choice_raw();
+        // See `update_firmware_rows`: no Secure Boot for a network install.
+        if self.state.borrow().method == Some(Method::Network) && choice.secure_boot() {
+            return FirmwareChoice::Uefi { secure_boot: false };
+        }
+        choice
+    }
+
+    fn firmware_choice_raw(&self) -> FirmwareChoice {
         match self.firmware.selected() {
             0 => FirmwareChoice::Uefi { secure_boot: self.secure_boot.is_active() },
             1 => FirmwareChoice::Bios,
@@ -1048,9 +1246,20 @@ impl Wizard {
     fn update_firmware_rows(&self) {
         let choice = self.firmware.selected();
         let secure_ok = self.state.borrow().caps.as_ref().is_none_or(|c| c.secure_boot);
+        // Secure Boot refuses a network installer's kernel (it isn't
+        // started through a signed boot loader).
+        let network = self.state.borrow().method == Some(Method::Network);
         // Secure Boot is a choice for automatic UEFI; a firmware file
         // either is a Secure Boot build or isn't.
-        self.secure_boot.set_sensitive(choice == 0 && secure_ok);
+        self.secure_boot.set_sensitive(choice == 0 && secure_ok && !network);
+        self.secure_boot.set_subtitle(if network {
+            "Not available for a network install: it would refuse the installer"
+        } else {
+            "Only lets signed operating systems start"
+        });
+        if network {
+            self.secure_boot.set_active(false);
+        }
         match self.firmware_choice() {
             FirmwareChoice::Bios => self.secure_boot.set_active(false),
             FirmwareChoice::Loader(path) => self.secure_boot.set_active(vmng_virt::loader_is_secure(&path)),
@@ -1084,6 +1293,7 @@ impl Wizard {
             0 => match st.method {
                 Some(Method::Media) => !st.detecting && self.media_path().is_some(),
                 Some(Method::Import) => st.import_path.is_some(),
+                Some(Method::Network) => !st.detecting && st.tree.is_some(),
                 Some(Method::Manual) => true,
                 None => false,
             },
@@ -1157,6 +1367,8 @@ impl Wizard {
                     self.media_path().map(|p| p.rsplit('/').next().unwrap_or(&p).to_owned()).unwrap_or_default()
                 }
                 Some(Method::Import) => "Existing disk".into(),
+                Some(Method::Network) => self.tree_url.text().trim().to_owned(),
+                _ if self.pxe.is_active() => "The network (PXE)".into(),
                 _ => "Nothing (manual)".into(),
             },
         );
@@ -1211,6 +1423,13 @@ impl Wizard {
         let install = match st.method {
             Some(Method::Media) => InstallSource::Media(self.media_path().unwrap_or_default()),
             Some(Method::Import) => InstallSource::ImportDisk(st.import_path.clone().unwrap_or_default()),
+            // Filled in once the installer is downloaded (see `create`).
+            Some(Method::Network) => InstallSource::Network(NetworkInstall {
+                kernel: String::new(),
+                initrd: String::new(),
+                args: String::new(),
+            }),
+            _ if self.pxe.is_active() => InstallSource::NetworkBoot,
             _ => InstallSource::Manual,
         };
         let disk = (st.method != Some(Method::Import) && self.create_disk.is_active())
@@ -1255,12 +1474,37 @@ impl Wizard {
     }
 
     fn create(self: &Rc<Self>) {
-        let spec = self.spec();
+        let mut spec = self.spec();
         let customize = self.customize.is_active();
+        let network = matches!(spec.install, InstallSource::Network(_));
+        let tree = self.state.borrow().tree.clone().filter(|_| network);
+        if network && tree.is_none() {
+            return;
+        }
+        let extra_args = self.kernel_args.text().trim().to_owned();
         self.set_busy(true);
         let conn = self.ctx.conn.clone();
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
+            if let Some(tree) = tree {
+                let Some(w) = weak.upgrade() else { return };
+                match w.download_installer(&tree).await {
+                    Ok((kernel, initrd)) => {
+                        let args = [tree.args.as_str(), extra_args.as_str()]
+                            .iter()
+                            .filter(|a| !a.is_empty())
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        spec.install = InstallSource::Network(NetworkInstall { kernel, initrd, args });
+                    }
+                    Err(e) => {
+                        w.set_busy(false);
+                        w.ctx.feedback.error("Couldn't download the installer", &e);
+                        return;
+                    }
+                }
+            }
             let s = spec.clone();
             let result = conn.call(move |c| c.create_vm(&s, !customize)).await;
             let Some(w) = weak.upgrade() else { return };
@@ -1277,11 +1521,90 @@ impl Wizard {
                         None => w.ctx.feedback.toast(&format!("Created and started {}", spec.name)),
                     }
                     w.dialog.close();
-                    (w.on_created)(created.uuid, customize);
+                    (w.on_created)(created, customize);
                 }
-                Err(e) => w.ctx.feedback.error(&format!("Couldn't create {}", spec.name), e.message()),
+                Err(e) => {
+                    if let InstallSource::Network(n) = &spec.install {
+                        let (k, i) = (n.kernel.clone(), n.initrd.clone());
+                        let _ = conn
+                            .call(move |c| {
+                                c.remove_boot_file(&k);
+                                c.remove_boot_file(&i);
+                                Ok(())
+                            })
+                            .await;
+                    }
+                    w.ctx.feedback.error(&format!("Couldn't create {}", spec.name), e.message())
+                }
             }
         });
+    }
+
+    /// Downloads the network installer's kernel and initrd and stores them
+    /// where QEMU can read them. Shows the progress on the Create button.
+    async fn download_installer(self: &Rc<Self>, tree: &TreeInstaller) -> Result<(String, String), String> {
+        let done = Arc::new(AtomicU64::new(0));
+        let total = Arc::new(AtomicU64::new(0));
+        let label = self.next_label.clone();
+        let (d, t) = (done.clone(), total.clone());
+        let ticker = glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+            let (d, t) = (d.load(Ordering::Relaxed), t.load(Ordering::Relaxed));
+            label.set_label(&match (d * 100).checked_div(t) {
+                Some(percent) => format!("Downloading… {percent}%"),
+                None => format!("Downloading… {}", format::bytes(d)),
+            });
+            glib::ControlFlow::Continue
+        });
+        let mut stored = Vec::new();
+        let mut result = Ok(());
+        for (i, url) in [&tree.kernel_url, &tree.initrd_url].into_iter().enumerate() {
+            let (url, d, t) = (url.clone(), done.clone(), total.clone());
+            d.store(0, Ordering::Relaxed);
+            t.store(0, Ordering::Relaxed);
+            let data = gio::spawn_blocking(move || {
+                net_install::fetch(&url, net_install::MAX_FILE, &|got, all| {
+                    d.store(got, Ordering::Relaxed);
+                    t.store(all.unwrap_or(0), Ordering::Relaxed);
+                })
+            })
+            .await
+            .unwrap_or_else(|_| Err("The download stopped unexpectedly.".into()));
+            let data = match data {
+                Ok(d) => d,
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            };
+            self.next_label.set_label("Storing the installer…");
+            let name = format!("{}-{}", self.name.text().trim(), if i == 0 { "kernel" } else { "initrd" });
+            match self.ctx.conn.call(move |c| c.store_boot_file(&name, &data)).await {
+                Ok(path) => stored.push(path),
+                Err(e) => {
+                    result = Err(e.message().to_owned());
+                    break;
+                }
+            }
+        }
+        ticker.remove();
+        self.next_label.set_label("Creating…");
+        match (result, stored.as_slice()) {
+            (Ok(()), [kernel, initrd]) => Ok((kernel.clone(), initrd.clone())),
+            (result, _) => {
+                let paths = stored.clone();
+                let _ = self
+                    .ctx
+                    .conn
+                    .call(move |c| {
+                        for p in &paths {
+                            c.remove_boot_file(p);
+                        }
+                        Ok(())
+                    })
+                    .await;
+                Err(result.err().unwrap_or_else(|| "The installer files are incomplete.".into()))
+            }
+        }
     }
 }
 

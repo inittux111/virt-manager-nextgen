@@ -13,13 +13,14 @@ use std::sync::OnceLock;
 use std::sync::mpsc;
 
 use gtk::glib;
-use vmng_osinfo::{OsDb, OsInfo};
+use vmng_osinfo::{InstallTree, OsDb, OsInfo};
 
 static CATALOG: OnceLock<HashMap<String, OsInfo>> = OnceLock::new();
 static WORKER: OnceLock<mpsc::Sender<Request>> = OnceLock::new();
 
 enum Request {
     IdentifyMedia(String, futures_oneshot::Sender<Result<Option<OsInfo>, String>>),
+    IdentifyTree(String, futures_oneshot::Sender<Result<InstallTree, String>>),
 }
 
 /// Starts loading the database in the background. Safe to call more than once.
@@ -40,6 +41,7 @@ pub fn preload() {
                 for req in rx {
                     match req {
                         Request::IdentifyMedia(_, reply) => reply.send(Err(e.to_string())),
+                        Request::IdentifyTree(_, reply) => reply.send(Err(e.to_string())),
                     }
                 }
                 return;
@@ -49,6 +51,7 @@ pub fn preload() {
         for req in rx {
             match req {
                 Request::IdentifyMedia(path, reply) => reply.send(db.identify_media(&path).map_err(|e| e.0)),
+                Request::IdentifyTree(url, reply) => reply.send(db.identify_tree(&url).map_err(|e| e.0)),
             }
         }
     });
@@ -71,6 +74,16 @@ pub fn all() -> impl Iterator<Item = &'static OsInfo> {
 pub async fn identify_media(path: String) -> Result<Option<OsInfo>, String> {
     let (tx, rx) = futures_oneshot::channel();
     let sent = WORKER.get().map(|w| w.send(Request::IdentifyMedia(path, tx)).is_ok()).unwrap_or(false);
+    if !sent {
+        return Err("The operating system database is not available.".into());
+    }
+    rx.await.unwrap_or_else(|| Err("The operating system database stopped.".into()))
+}
+
+/// Reads a network install tree's `.treeinfo` and identifies its OS.
+pub async fn identify_tree(url: String) -> Result<InstallTree, String> {
+    let (tx, rx) = futures_oneshot::channel();
+    let sent = WORKER.get().map(|w| w.send(Request::IdentifyTree(url, tx)).is_ok()).unwrap_or(false);
     if !sent {
         return Err("The operating system database is not available.".into());
     }

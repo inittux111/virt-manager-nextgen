@@ -4,12 +4,15 @@ A modern desktop app for QEMU/KVM virtual machines, through libvirt: a
 GNOME-style alternative to virt-manager, written in Rust with GTK 4 and
 libadwaita.
 
-- Create machines from installer images, with the operating system
-  detected automatically (libosinfo)
+- Create machines from installer images or a network install tree (Fedora,
+  RHEL-like, openSUSE, Debian), with the operating system detected
+  automatically (libosinfo), or boot them from the network (PXE)
 - Start, pause, shut down, clone and delete machines, and take snapshots
+  (inside the disk or as separate files, with a picture of the screen)
 - Each machine's screen (SPICE or VNC) or text console in its own window
-- Edit hardware, choose BIOS, UEFI or a specific UEFI firmware file, add a
-  TPM 2.0 (Windows 11)
+- Edit hardware: CPU model and layout (sockets, cores, threads), security
+  mitigations, 3D acceleration, BIOS, UEFI or a specific UEFI firmware
+  file, TPM 2.0 (Windows 11), the operating system type
 - Manage the host's virtual networks and storage pools
 - CPU, memory, disk and network graphs, and guest details through the
   QEMU guest agent
@@ -155,6 +158,13 @@ For each system it runs:
    - inserting a disc image into a running VM's CD-ROM drive
    - BIOS, UEFI and each UEFI firmware file
    - TPM 2.0
+   - CPU models, CPU layout and security mitigations
+   - changing the operating system type
+   - network boot (PXE) and a network install from Debian's mirror (needs
+     internet)
+   - 3D acceleration (skipped where QEMU can't use the graphics card, e.g.
+     inside the Debian container with an NVIDIA card)
+   - snapshots inside the disk and as separate files
    - virtual networks and storage pools
 3. **Screens**: a screenshot of every main screen (machines, hardware,
    firmware, Add Hardware, snapshots, performance, the console and text
@@ -213,6 +223,15 @@ daemon and QEMU must be installed and running:
 To manage the system-wide machines (`QEMU/KVM · System`) without a password
 prompt each time, add yourself to the `libvirt` group and log in again:
 `sudo usermod -aG libvirt $USER`.
+
+### 3D acceleration
+
+Hardware → Video → **3D acceleration** lets a Linux guest draw with your
+graphics card. It works on the **User session** connection. On the
+**System** connection QEMU runs under SELinux confinement, which some
+graphics drivers (such as NVIDIA's own) aren't allowed to run in; the machine
+then doesn't start, and the app says so. Turn 3D acceleration off for that
+machine, or run it on the User session.
 
 ## License
 

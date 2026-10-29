@@ -4,6 +4,7 @@
 //! result without ever blocking the main loop.
 
 mod monitor;
+pub mod net_install;
 
 pub use monitor::{HISTORY_LEN, HostLive, Monitor, Sample, VmLive};
 

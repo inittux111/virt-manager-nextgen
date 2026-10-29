@@ -26,6 +26,9 @@ impl Feedback {
 
     /// A failed operation: a toast with a button that shows the details.
     pub fn error(&self, title: &str, details: &str) {
+        // Debug builds: unattended test runs see the error in the log.
+        #[cfg(debug_assertions)]
+        eprintln!("error: {title}: {details}");
         let toast =
             adw::Toast::builder().title(glib::markup_escape_text(title)).button_label("Details").timeout(8).build();
         let parent = self.parent.clone();

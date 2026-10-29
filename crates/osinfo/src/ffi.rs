@@ -22,6 +22,7 @@ opaque!(
     OsinfoProduct,
     OsinfoEntity,
     OsinfoMedia,
+    OsinfoTree,
     OsinfoResources,
     OsinfoResourcesList,
     GCancellable
@@ -67,6 +68,17 @@ unsafe extern "C" {
         err: *mut *mut GError,
     ) -> *mut OsinfoMedia;
     pub fn osinfo_media_get_os(media: *mut OsinfoMedia) -> *mut OsinfoOs;
+
+    pub fn osinfo_tree_create_from_location(
+        location: *const c_char,
+        cancellable: *mut GCancellable,
+        err: *mut *mut GError,
+    ) -> *mut OsinfoTree;
+    pub fn osinfo_db_identify_tree(db: *mut OsinfoDb, tree: *mut OsinfoTree) -> gboolean;
+    pub fn osinfo_tree_get_os(tree: *mut OsinfoTree) -> *mut OsinfoOs;
+    pub fn osinfo_tree_get_kernel_path(tree: *mut OsinfoTree) -> *const c_char;
+    pub fn osinfo_tree_get_initrd_path(tree: *mut OsinfoTree) -> *const c_char;
+    pub fn osinfo_os_get_kernel_url_argument(os: *mut OsinfoOs) -> *const c_char;
 
     pub fn osinfo_os_get_minimum_resources(os: *mut OsinfoOs) -> *mut OsinfoResourcesList;
     pub fn osinfo_os_get_recommended_resources(os: *mut OsinfoOs) -> *mut OsinfoResourcesList;

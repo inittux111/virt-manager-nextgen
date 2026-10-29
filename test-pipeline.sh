@@ -36,8 +36,9 @@ for t in $targets; do
     if [ -f "$results" ]; then
         pass=$(grep -c '^PASS' "$results")
         fail=$(grep -c '^FAIL' "$results")
-        printf '%-10s %3s passed, %s failed\n' "$label" "$pass" "$fail"
-        grep '^FAIL' "$results" | sed 's/^/           /'
+        skip=$(grep -c '^SKIP' "$results")
+        printf '%-10s %3s passed, %s failed, %s skipped\n' "$label" "$pass" "$fail" "$skip"
+        grep -E '^(FAIL|SKIP)' "$results" | sed 's/^/           /'
     else
         printf '%-10s did not run (see the output above)\n' "$label"
         status=1

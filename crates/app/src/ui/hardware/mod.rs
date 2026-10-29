@@ -352,7 +352,7 @@ impl HardwareView {
                             .unwrap_or_default()
                             .into_iter()
                             .map(|(p, _)| p)
-                            .filter(|p| p.active)
+                            .filter(|p| p.active && p.name != vmng_virt::BOOT_POOL)
                             .collect(),
                         session: matches!(c.kind(), vmng_virt::ConnectionKind::Session),
                         arch,

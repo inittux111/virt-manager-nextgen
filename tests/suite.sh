@@ -28,6 +28,10 @@ check hardware-add-edit-remove "$BIN/examples/hw_check" "$VM_URI" "$POOL" "$ISO"
 check firmware-bios-uefi-files "$BIN/examples/firmware_check"
 check tpm-2.0 "$BIN/examples/tpm_check" "$ISO" 1
 check networks-and-storage-pools "$BIN/examples/net_pool_check" "$NET_URI" "$tmp/netpool"
+check cpu-model-layout-mitigations "$BIN/examples/cpu_check"
+check os-type-change "$BIN/examples/os_check"
+check network-boot-pxe "$BIN/examples/pxe_check"
+check_gpu video-3d-acceleration "$BIN/examples/video3d_check"
 rm -rf "$tmp"
 
 # ── Screens ──────────────────────────────────────────────────────────────
@@ -81,6 +85,16 @@ check screen-storage screen storage VMNG_DEV_VIEW=storage
 for step in 0 1 2 3; do
     check "screen-new-vm-step-$step" screen "new-vm-step-$step" VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_STEP=$step
 done
+# Network install: read a Debian tree, download its installer, start it
+# once from the installer's kernel (the saved configuration boots the disk).
+tree=https://deb.debian.org/debian/dists/trixie/
+check screen-new-vm-network screen new-vm-network VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_URL=$tree
+check network-install screen network-install VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_URL=$tree \
+    VMNG_DEV_WIZARD_STEP=3 VMNG_DEV_WIZARD_CREATE=vmng-test-netinst VMNG_SCREENSHOT_DELAY=60
+check network-install-boots-installer-once sh -c "virsh -c '$VM_URI' dumpxml vmng-test-netinst | grep -q '<kernel>' \
+    && ! virsh -c '$VM_URI' dumpxml --inactive vmng-test-netinst | grep -q '<kernel>'"
+virsh -c "$VM_URI" destroy vmng-test-netinst >"$OUT/network-install-cleanup.log" 2>&1
+virsh -c "$VM_URI" undefine vmng-test-netinst --nvram --storage vda >>"$OUT/network-install-cleanup.log" 2>&1
 check screen-preferences screen preferences VMNG_DEV_ACTION=app.preferences
 check screen-shortcuts screen shortcuts VMNG_DEV_ACTION=app.shortcuts
 check screen-dark screen dark "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-dark

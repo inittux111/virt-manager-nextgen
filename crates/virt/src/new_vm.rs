@@ -17,8 +17,23 @@ pub enum InstallSource {
     Media(String),
     /// Use an existing disk image as the system disk.
     ImportDisk(String),
-    /// No installer: an empty machine (network boot or set up later).
+    /// No installer: an empty machine (set up later).
     Manual,
+    /// Install from a network install tree: the installer's kernel and
+    /// initrd (already stored where QEMU can read them, see
+    /// [`Connection::store_boot_file`]) start the first boot.
+    Network(NetworkInstall),
+    /// Boot from the network (PXE) until a system is installed on the disk.
+    NetworkBoot,
+}
+
+/// The installer of a network install tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkInstall {
+    pub kernel: String,
+    pub initrd: String,
+    /// Kernel command line, e.g. `inst.repo=https://…`.
+    pub args: String,
 }
 
 /// The disk to create for the machine.
@@ -87,6 +102,9 @@ pub struct Created {
     pub uuid: String,
     /// Set when the machine was created but could not be started.
     pub start_error: Option<Error>,
+    /// The machine runs a network installer that stops the machine when
+    /// it restarts at the end; start it again to boot the installed system.
+    pub restart_after_install: bool,
 }
 
 fn el(name: &str) -> Element {
@@ -248,7 +266,12 @@ pub fn build_domain_xml(vm: &NewVm, disk_path: Option<&str>) -> Element {
         NetworkChoice::None => None,
     };
     if let Some(iface) = iface {
-        dev.push(iface.with_child(el("model").with_attr("type", model)));
+        let mut iface = iface.with_child(el("model").with_attr("type", model));
+        // PXE: after the disk, so an installed system starts from it.
+        if vm.install == InstallSource::NetworkBoot {
+            iface.push(el("boot").with_attr("order", if disk_path.is_some() { "2" } else { "1" }));
+        }
+        dev.push(iface);
     }
 
     dev.push(el("console").with_attr("type", "pty").with_child(el("target").with_attr("type", "serial")));
@@ -301,7 +324,106 @@ pub fn build_domain_xml(vm: &NewVm, disk_path: Option<&str>) -> Element {
     d
 }
 
+/// The configuration for the first boot of a network install: the
+/// installer's kernel starts, and the machine stops when the installer
+/// restarts it (the persistent configuration boots the disk).
+fn install_xml(vm: &NewVm, disk_path: Option<&str>) -> Element {
+    let mut d = build_domain_xml(vm, disk_path);
+    if let InstallSource::Network(n) = &vm.install
+        && let Some(os) = d.child_mut("os")
+    {
+        os.push(el("kernel").with_text(&n.kernel));
+        os.push(el("initrd").with_text(&n.initrd));
+        if !n.args.trim().is_empty() {
+            os.push(el("cmdline").with_text(n.args.trim()));
+        }
+        if let Some(r) = d.child_mut("on_reboot") {
+            r.set_text("destroy");
+        }
+    }
+    d
+}
+
+/// The storage pool for installer kernels and initrds (the name and folder
+/// virt-install uses).
+pub const BOOT_POOL: &str = "boot-scratch";
+
 impl Connection {
+    /// Stores a file the installer boots from (kernel, initrd) where QEMU
+    /// can read it, in the `boot-scratch` pool (made when missing, and
+    /// gone again after the daemon restarts). Returns its path.
+    pub fn store_boot_file(&self, name: &str, data: &[u8]) -> Result<String> {
+        use virt::storage_pool::StoragePool;
+        use virt::storage_vol::StorageVol;
+        let name: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+            .collect();
+        let pool = match StoragePool::lookup_by_name(self.raw(), BOOT_POOL) {
+            Ok(p) => {
+                if !p.is_active()? {
+                    p.create(0)?;
+                }
+                p
+            }
+            Err(_) => {
+                let dir = match self.kind() {
+                    crate::ConnectionKind::Session => {
+                        let cache = std::env::var_os("XDG_CACHE_HOME")
+                            .map(std::path::PathBuf::from)
+                            .or_else(|| std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".cache")))
+                            .ok_or_else(|| Error::Invalid("No cache folder for the installer files.".into()))?;
+                        cache.join("virt-manager-nextgen").join("boot").to_string_lossy().into_owned()
+                    }
+                    _ => "/var/lib/libvirt/boot".to_owned(),
+                };
+                let xml = el("pool")
+                    .with_attr("type", "dir")
+                    .with_child(el("name").with_text(BOOT_POOL))
+                    .with_child(el("target").with_child(el("path").with_text(dir)));
+                // VIR_STORAGE_POOL_CREATE_WITH_BUILD: makes the folder.
+                StoragePool::create_xml(self.raw(), &xml.to_xml(), 1)?
+            }
+        };
+        let _ = pool.refresh(0);
+        if let Ok(old) = StorageVol::lookup_by_name(&pool, &name) {
+            old.delete(0)?;
+        }
+        let vol_xml = el("volume")
+            .with_child(el("name").with_text(&name))
+            .with_child(el("capacity").with_attr("unit", "bytes").with_text(data.len().to_string()))
+            .with_child(el("target").with_child(el("format").with_attr("type", "raw")));
+        let vol = StorageVol::create_xml(&pool, &vol_xml.to_xml(), 0)?;
+        let stream = virt::stream::Stream::new(self.raw(), 0)?;
+        let upload = (|| -> Result<()> {
+            vol.upload(&stream, 0, data.len() as u64, 0)?;
+            let mut rest = data;
+            while !rest.is_empty() {
+                // libvirt takes at most 32 MiB per message.
+                let sent = stream.send(&rest[..rest.len().min(1 << 20)])?;
+                if sent == 0 {
+                    return Err(Error::Invalid("The upload of the installer file stopped.".into()));
+                }
+                rest = &rest[sent..];
+            }
+            Ok(())
+        })();
+        if let Err(e) = upload {
+            let _ = stream.abort();
+            let _ = vol.delete(0);
+            return Err(e);
+        }
+        stream.finish()?;
+        Ok(vol.get_path()?)
+    }
+
+    /// Removes a file stored by [`store_boot_file`](Self::store_boot_file).
+    pub fn remove_boot_file(&self, path: &str) {
+        if let Ok(v) = virt::storage_vol::StorageVol::lookup_by_path(self.raw(), path) {
+            let _ = v.delete(0);
+        }
+    }
+
     /// Creates (and optionally starts) a VM. If anything fails before the
     /// machine is defined, created disks are removed again.
     pub fn create_vm(&self, vm: &NewVm, start: bool) -> Result<Created> {
@@ -321,8 +443,16 @@ impl Connection {
             }
             _ => None,
         };
-        let xml = build_domain_xml(vm, disk_path.as_deref()).to_xml();
-        let dom = match Domain::define_xml(self.raw(), &xml) {
+        // A network install first boots the installer's kernel; once
+        // started, the configuration is replaced by the one that boots the
+        // disk (it applies from the next start).
+        let network = matches!(vm.install, InstallSource::Network(_));
+        let first = if network && start {
+            install_xml(vm, disk_path.as_deref())
+        } else {
+            build_domain_xml(vm, disk_path.as_deref())
+        };
+        let dom = match Domain::define_xml(self.raw(), &first.to_xml()) {
             Ok(d) => d,
             Err(e) => {
                 if let Some(path) = created_disk
@@ -335,7 +465,20 @@ impl Connection {
         };
         let uuid = dom.get_uuid_string()?;
         let start_error = if start { dom.create().err().map(Error::from) } else { None };
-        Ok(Created { uuid, start_error })
+        let mut restart_after_install = false;
+        if network && start {
+            // The same machine (same UUID), now booting from its disk.
+            let mut after = build_domain_xml(vm, disk_path.as_deref());
+            after.children.insert(1, vmng_xml::Node::Element(el("uuid").with_text(&uuid)));
+            Domain::define_xml(self.raw(), &after.to_xml())?;
+            restart_after_install = start_error.is_none();
+        }
+        if let InstallSource::Network(n) = &vm.install {
+            // QEMU has read them when it started.
+            self.remove_boot_file(&n.kernel);
+            self.remove_boot_file(&n.initrd);
+        }
+        Ok(Created { uuid, start_error, restart_after_install })
     }
 
     /// The domain XML a request would produce (for review and testing).
@@ -344,7 +487,7 @@ impl Connection {
             InstallSource::ImportDisk(p) => Some(p.clone()),
             _ => vm.disk.as_ref().map(|d| format!("<{}>/{}.qcow2", d.pool, vm.name)),
         };
-        build_domain_xml(vm, disk.as_deref()).to_xml()
+        install_xml(vm, disk.as_deref()).to_xml()
     }
 }
 
@@ -435,5 +578,32 @@ mod tests {
         assert!(xml.find("devices/disk").is_none());
         assert!(xml.find("devices/interface").is_none());
         assert!(xml.find("devices/graphics").is_none());
+    }
+
+    #[test]
+    fn network_install_boots_the_installer_once() {
+        let mut vm = linux();
+        vm.install = InstallSource::Network(NetworkInstall {
+            kernel: "/boot/vmlinuz".into(),
+            initrd: "/boot/initrd.img".into(),
+            args: "inst.repo=https://example.org/os".into(),
+        });
+        let first = install_xml(&vm, Some("/images/vm.qcow2"));
+        assert_eq!(first.find_text("os/kernel").as_deref(), Some("/boot/vmlinuz"));
+        assert_eq!(first.find_text("os/cmdline").as_deref(), Some("inst.repo=https://example.org/os"));
+        assert_eq!(first.find_text("on_reboot").as_deref(), Some("destroy"));
+        let after = build_domain_xml(&vm, Some("/images/vm.qcow2"));
+        assert!(after.find("os/kernel").is_none());
+        assert_eq!(after.find_text("on_reboot").as_deref(), Some("restart"));
+    }
+
+    #[test]
+    fn network_boot_comes_after_the_disk() {
+        let mut vm = linux();
+        vm.install = InstallSource::NetworkBoot;
+        let xml = build_domain_xml(&vm, Some("/images/vm.qcow2"));
+        assert_eq!(xml.find_attr("devices/disk/boot", "order"), Some("1"));
+        assert_eq!(xml.find_attr("devices/interface/boot", "order"), Some("2"));
+        assert_eq!(build_domain_xml(&vm, None).find_attr("devices/interface/boot", "order"), Some("1"));
     }
 }
