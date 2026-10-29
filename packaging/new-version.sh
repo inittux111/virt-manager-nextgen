@@ -3,15 +3,16 @@
 #
 #   packaging/new-version.sh [patch|minor|major|X.Y.Z]   (default: patch)
 #
-# Updates Cargo.toml, Cargo.lock, the spec (Version + changelog) and the
-# AppStream release list. The "what's new" notes are the commit titles since
-# the previous version's tag. Then commits those files and tags vX.Y.Z.
+# Updates Cargo.toml, Cargo.lock, the spec (Version + changelog), the
+# AppStream release list and the Arch PKGBUILD's pkgver. The "what's new"
+# notes are the commit titles since the previous version's tag. Then commits those files and tags vX.Y.Z.
 # build-rpm.sh and build-deb.sh call this before every build (not with
 # --rebuild). It needs only git and standard tools.
 set -eu
 
 cd "$(dirname "$0")/.."
 spec=packaging/virt-manager-nextgen.spec
+pkgbuild=packaging/arch/PKGBUILD
 metainfo=data/io.github.inittux111.VirtManagerNextgen.metainfo.xml
 
 current=$(packaging/version.sh)
@@ -73,6 +74,9 @@ release=$(mktemp)
 sed -i "/<releases>/r $release" "$metainfo"
 rm -f "$release"
 
-git commit -q -m "Release $next" -- Cargo.toml Cargo.lock "$spec" "$metainfo"
+# The Arch recipe (unofficial): its version.
+sed -i "s/^pkgver=.*/pkgver=$next/" "$pkgbuild"
+
+git commit -q -m "Release $next" -- Cargo.toml Cargo.lock "$spec" "$metainfo" "$pkgbuild"
 git tag -a "v$next" -m "Version $next"
 echo "Committed and tagged v$next."

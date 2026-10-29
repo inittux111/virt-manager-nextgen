@@ -1,8 +1,11 @@
-# Unofficial Arch Linux package (not tested on Arch). Built by
-# ./build-arch.sh, which puts the source tarball next to this file and sets
-# pkgver from Cargo.toml.
+# Unofficial Arch Linux package (not tested on Arch).
+#
+# On Arch: put the release's source file (virt-manager-nextgen-<pkgver>.tar.gz)
+# next to this file and run `makepkg -si`. From another system:
+# ./build-arch.sh builds it in an Arch container. pkgver follows the app's
+# version (packaging/new-version.sh updates it).
 pkgname=virt-manager-nextgen
-pkgver=0.0.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="Manage QEMU/KVM virtual machines through libvirt (unofficial, untested Arch build)"
 arch=('x86_64')
