@@ -104,10 +104,11 @@ virt-manager has these, but virt-manager-nextgen doesn't:
 ## Use at your own risk
 
 virt-manager-nextgen is an independent project, built as a personal-use
-project. It is based on virt-manager, with the goal of a more modern-looking
-virt-manager with most of its features, but it isn't affiliated with,
-endorsed by or supported by the virt-manager, libvirt or QEMU projects or
-Red Hat.
+project. It is a new app written from scratch, with virt-manager as its
+model: the goal is a more modern-looking virt-manager with most of its
+features. It doesn't reuse virt-manager's code, and it isn't affiliated
+with, endorsed by or supported by the virt-manager, libvirt or QEMU projects
+or Red Hat.
 
 - It manages your virtual machines through libvirt, the same way
   virt-manager does, but it is young and tested by one person. Changes it
