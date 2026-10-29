@@ -10,6 +10,8 @@
 #   POOL           a storage pool on VM_URI for test disks
 #   VM_URI         libvirt for the VM checks
 #   NET_URI        libvirt for the network/pool check
+#   REMOTE_URI     another computer's libvirt over SSH (qemu+ssh://…) for the
+#                  remote checks; skipped when empty
 #   WAYLAND_DISPLAY  the headless test screen for screenshots
 #
 # Everything it creates is named vmng-test-… and removed again.
@@ -70,6 +72,9 @@ check screen-machines screen machines "$vm"
 check screen-machines-narrow screen machines-narrow "$vm" VMNG_DEV_SIZE=400x760
 check screen-hardware screen hardware "$vm" VMNG_DEV_ACTION=vm.hardware
 check screen-overview screen overview "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=0
+# Regression: just looking at every hardware page must not count as a change.
+check regression-viewing-hardware-changes-nothing screen hardware-all-pages "$vm" VMNG_DEV_ACTION=vm.hardware \
+    VMNG_DEV_HW_ALL_CLEAN=1 VMNG_SCREENSHOT_DELAY=14
 check screen-boot-firmware screen boot-firmware "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=2
 check screen-add-hardware screen add-hardware "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ADD=1
 check screen-snapshots screen snapshots "$vm" VMNG_DEV_ACTION=vm.snapshots
@@ -123,6 +128,42 @@ check new-vm-uses-the-existing-disk sh -c "virsh -c '$VM_URI' domblklist vmng-te
 virsh -c "$VM_URI" destroy vmng-test-existing >>"$OUT/existing-disk.log" 2>&1
 virsh -c "$VM_URI" undefine vmng-test-existing --nvram >>"$OUT/existing-disk.log" 2>&1
 virsh -c "$VM_URI" vol-delete --pool "$POOL" vmng-test-existing.qcow2 >>"$OUT/existing-disk.log" 2>&1
+# Starting a machine when the host boots, switched on in Boot & firmware.
+printf '<domain type="kvm"><name>vmng-test-autostart</name><memory unit="MiB">256</memory><vcpu>1</vcpu><os><type arch="x86_64" machine="q35">hvm</type></os><devices><graphics type="vnc" autoport="yes"/></devices></domain>' \
+    >"$OUT/vmng-test-autostart.xml"
+virsh -c "$VM_URI" define "$OUT/vmng-test-autostart.xml" >"$OUT/autostart.log" 2>&1
+check screen-autostart screen autostart VMNG_DEV_SELECT=vmng-test-autostart VMNG_DEV_ACTION=vm.hardware \
+    VMNG_DEV_HW_ROW=2 VMNG_DEV_AUTOSTART=1
+check autostart-saved sh -c "virsh -c '$VM_URI' dominfo vmng-test-autostart | grep -qiE 'autostart: +enable'"
+virsh -c "$VM_URI" undefine vmng-test-autostart >>"$OUT/autostart.log" 2>&1
+
+# Another computer over SSH: connect from the Add Remote Computer dialog,
+# see its machines and a machine's screen through the SSH tunnel, remove it.
+if [ -n "${REMOTE_URI:-}" ]; then
+    check remote-ssh-connection "$BIN/examples/remote_check" "$REMOTE_URI"
+    # Without the installer disc: that file is only on this computer.
+    sed -e 's/vmng-test-ui/vmng-test-remote-ui/' -e '/device="cdrom"/d' "$OUT/vmng-test-ui.xml" \
+        >"$OUT/vmng-test-remote-ui.xml"
+    check remote-test-vm-starts virsh -c "$REMOTE_URI" create "$OUT/vmng-test-remote-ui.xml"
+    config_vm=$config
+    config="$OUT/config-remote"
+    mkdir -p "$config/virt-manager-nextgen"
+    printf '[connections]\nautoconnect=%s\nlast=%s\n' "$VM_URI" "$VM_URI" >"$config/virt-manager-nextgen/settings.ini"
+    check screen-add-remote screen add-remote VMNG_DEV_ACTION=win.add-connection VMNG_DEV_REMOTE="$REMOTE_URI"
+    check screen-remote-machines screen remote-machines VMNG_DEV_ACTION=win.add-connection \
+        VMNG_DEV_REMOTE="$REMOTE_URI" VMNG_DEV_FORM_SUBMIT=1 VMNG_DEV_REMEMBER=1 VMNG_DEV_SELECT=vmng-test-remote-ui \
+        VMNG_SCREENSHOT_DELAY=14
+    check remote-connection-saved grep -q "^remote=qemu+ssh://" "$config/virt-manager-nextgen/settings.ini"
+    check screen-remote-console screen remote-console VMNG_DEV_SELECT=vmng-test-remote-ui VMNG_DEV_ACTION=vm.console \
+        VMNG_SCREENSHOT_DELAY=14
+    check screen-remote-menu screen remote-menu VMNG_DEV_MAIN_MENU=1 VMNG_DEV_SHOT_POPOVER=1
+    check screen-remote-removed screen remote-removed VMNG_DEV_ACTION=win.remove-connection VMNG_DEV_CONFIRM=1 \
+        VMNG_DEV_REMEMBER=1
+    check remote-connection-removed grep -q "^remote=$" "$config/virt-manager-nextgen/settings.ini"
+    config=$config_vm
+    virsh -c "$REMOTE_URI" destroy vmng-test-remote-ui >"$OUT/remote-cleanup.log" 2>&1
+fi
+
 check screen-preferences screen preferences VMNG_DEV_ACTION=app.preferences
 check screen-shortcuts screen shortcuts VMNG_DEV_ACTION=app.shortcuts
 check screen-dark screen dark "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-dark

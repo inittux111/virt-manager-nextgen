@@ -4,6 +4,7 @@
 mod adaptive;
 mod chart;
 mod form_dialog;
+mod host_path;
 mod logo_data;
 mod meter;
 mod os_logo;
@@ -13,6 +14,7 @@ mod status;
 pub use adaptive::{ListDetail, reflow, scrolled_page};
 pub use chart::Chart;
 pub use form_dialog::FormDialog;
+pub use host_path::pick_host_path;
 pub use meter::Meter;
 pub use os_logo::OsLogo;
 pub use sparkline::Sparkline;

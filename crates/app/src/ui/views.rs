@@ -53,10 +53,10 @@ pub enum ConnStatus {
 }
 
 /// Short name of a connection, e.g. "System".
-pub fn connection_name(kind: &ConnectionKind) -> &str {
+pub fn connection_name(kind: &ConnectionKind) -> String {
     match kind {
-        ConnectionKind::System => "System",
-        ConnectionKind::Session => "User session",
-        ConnectionKind::Other(uri) => uri,
+        ConnectionKind::System => "System".into(),
+        ConnectionKind::Session => "User session".into(),
+        other => other.label(),
     }
 }

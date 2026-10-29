@@ -383,6 +383,11 @@ impl Connection {
             }
             Err(_) => {
                 let dir = match self.kind() {
+                    k if k.is_session() && k.is_remote() => {
+                        return Err(Error::Invalid(
+                            "Network installs need the other computer's System connection.".into(),
+                        ));
+                    }
                     crate::ConnectionKind::Session => {
                         let cache = std::env::var_os("XDG_CACHE_HOME")
                             .map(std::path::PathBuf::from)

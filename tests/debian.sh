@@ -12,10 +12,7 @@ rm -rf "$OUT" "$src"
 mkdir -p "$OUT" "$src"
 
 echo "Preparing the Debian $release test container…"
-podman build --quiet --build-arg DEBIAN_RELEASE="$release" \
-    -t "localhost/virt-manager-nextgen-debian:$release" packaging/debian >/dev/null || exit 1
-podman build --quiet --build-arg BUILD_IMAGE="localhost/virt-manager-nextgen-debian:$release" \
-    -t "localhost/virt-manager-nextgen-debian-test:$release" tests/debian >/dev/null || exit 1
+sh tests/debian-image.sh "$release" || exit 1
 
 # The working tree as it is now (including uncommitted changes).
 git ls-files -z --cached --others --exclude-standard | tar --null -T - -c | tar -x -C "$src"

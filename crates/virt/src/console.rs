@@ -57,9 +57,15 @@ impl ConsoleStream {
 
 impl Connection {
     /// Opens a socket to the domain's graphical display (SPICE or VNC)
-    /// number `index`, already authenticated through libvirt. Only works
-    /// for local connections.
+    /// number `index`, already authenticated through libvirt. On another
+    /// computer (SSH), a tunnel to the display's port instead.
     pub fn open_graphics_fd(&self, uuid: &str, index: u32) -> Result<OwnedFd> {
+        if let Some(target) = self.kind().ssh_target() {
+            let live = vmng_xml::parse(&self.domain(uuid)?.get_xml_desc(0)?)?;
+            let dest = crate::remote::display_address(&live, index as usize)
+                .ok_or_else(|| Error::Invalid("The display isn't listening on the other computer.".into()))?;
+            return target.tunnel(&dest);
+        }
         let fd = self.domain(uuid)?.open_graphics_fd(index, GRAPHICS_SKIPAUTH)?;
         let fd = i32::try_from(fd).map_err(|_| Error::Invalid("libvirt returned an invalid descriptor.".into()))?;
         // SAFETY: libvirt hands us a new descriptor that we now own.

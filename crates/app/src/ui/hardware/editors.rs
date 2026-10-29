@@ -84,6 +84,8 @@ pub struct Choices {
     pub cpu_security: Vec<String>,
     /// The host's wired network cards (for a direct connection).
     pub host_nics: Vec<String>,
+    /// The other computer's name when the machine runs elsewhere (SSH).
+    pub remote: Option<String>,
 }
 
 // ── Row helpers ─────────────────────────────────────────────────────────
@@ -974,30 +976,21 @@ pub fn cdrom(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
     // Any ISO file, also one libvirt doesn't know yet (e.g. in Downloads).
     let browse = gtk::Button::builder().label("Browse…").valign(gtk::Align::Center).build();
     browse.set_tooltip_text(Some("Choose a disc image file"));
+    let remote = choices.remote.clone();
     browse.connect_clicked(move |button| {
         let filter = gtk::FileFilter::new();
         filter.set_name(Some("Disc images"));
         filter.add_suffix("iso");
         filter.add_mime_type("application/x-cd-image");
-        let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&filter);
-        let dialog = gtk::FileDialog::builder()
-            .title("Choose a Disc Image")
-            .filters(&filters)
-            .default_filter(&filter)
-            .modal(true)
-            .build();
-        if let Some(downloads) = gtk::glib::user_special_dir(gtk::glib::UserDirectory::Downloads) {
-            dialog.set_initial_folder(Some(&gtk::gio::File::for_path(downloads)));
-        }
-        let window = button.root().and_downcast::<gtk::Window>();
         let choose = choose.clone();
-        gtk::glib::spawn_future_local(async move {
-            let Ok(file) = dialog.open_future(window.as_ref()).await else { return };
-            if let Some(path) = file.path() {
-                choose(path.to_string_lossy().into_owned());
-            }
-        });
+        super::super::widgets::pick_host_path(
+            button.upcast_ref(),
+            remote.as_deref(),
+            false,
+            "Choose a Disc Image",
+            Some(filter),
+            move |p| choose(p),
+        );
     });
     row.add_suffix(&browse);
     media.add(&row);

@@ -22,6 +22,7 @@ mod manage;
 mod memory;
 mod networks;
 mod new_vm;
+mod remote;
 mod screenshot;
 mod snapshot;
 mod stats;
@@ -47,6 +48,7 @@ pub use networks::{
 pub use new_vm::{
     BOOT_POOL, Created, GuestFamily, InstallSource, NetworkChoice, NetworkInstall, NewDisk, NewVm, build_domain_xml,
 };
+pub use remote::{SshTarget, display_address};
 pub use screenshot::Screenshot;
 pub use snapshot::{
     SnapshotInfo, SnapshotLocation, SnapshotModes, SnapshotOptions, validate_snapshot_name, validate_snapshot_name_for,

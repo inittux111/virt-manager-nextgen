@@ -493,18 +493,21 @@ pub fn take_snapshot_dialog(feedback: &Feedback, conn: Conn, vm: &DomainSummary,
         mode.connect_selected_notify(move |m| memory.set_visible(running && external(m)));
     }
     {
-        let (memory, memory_dir, parent) = (memory.clone(), memory_dir.clone(), feedback.parent().clone());
-        choose.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title("Folder for the Memory File").modal(true).build();
-            let window = parent.root().and_downcast::<gtk::Window>();
+        let (memory, memory_dir) = (memory.clone(), memory_dir.clone());
+        let remote = conn.remote_name();
+        choose.connect_clicked(move |b| {
             let (memory, memory_dir) = (memory.clone(), memory_dir.clone());
-            dialog.select_folder(window.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
-                if let Some(path) = result.ok().and_then(|f| f.path()) {
-                    let path = path.to_string_lossy().into_owned();
+            super::widgets::pick_host_path(
+                b.upcast_ref(),
+                remote.as_deref(),
+                true,
+                "Folder for the Memory File",
+                None,
+                move |path| {
                     memory.set_subtitle(&path);
                     memory_dir.replace(Some(path));
-                }
-            });
+                },
+            );
         });
     }
     {

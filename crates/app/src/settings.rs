@@ -49,6 +49,8 @@ pub struct Prefs {
     pub autoconnect: Vec<String>,
     /// The connection shown when the app starts.
     pub last_connection: String,
+    /// Other computers (SSH), by libvirt address.
+    pub remote_connections: Vec<String>,
 
     pub stats_interval_secs: u32,
     pub stats_cpu: bool,
@@ -94,6 +96,7 @@ impl Default for Prefs {
         Self {
             autoconnect: vec!["qemu:///system".into()],
             last_connection: "qemu:///system".into(),
+            remote_connections: Vec::new(),
             stats_interval_secs: 2,
             stats_cpu: true,
             stats_memory: true,
@@ -211,6 +214,9 @@ fn read(kf: &glib::KeyFile) -> Prefs {
             .string_list("connections", "autoconnect")
             .map_or(d.autoconnect.clone(), |l| l.iter().map(|g| g.to_string()).collect()),
         last_connection: s("connections", "last", &d.last_connection),
+        remote_connections: kf
+            .string_list("connections", "remote")
+            .map_or(d.remote_connections.clone(), |l| l.iter().map(|g| g.to_string()).collect()),
         stats_interval_secs: kf.integer("stats", "interval").map_or(d.stats_interval_secs, |v| v.clamp(1, 60) as u32),
         stats_cpu: b("stats", "cpu", d.stats_cpu),
         stats_memory: b("stats", "memory", d.stats_memory),
@@ -245,8 +251,11 @@ fn read(kf: &glib::KeyFile) -> Prefs {
 fn write(p: &Prefs) -> glib::KeyFile {
     let kf = glib::KeyFile::new();
     // KeyFile lists are ';'-separated; escape separators inside values.
-    let list: Vec<String> = p.autoconnect.iter().map(|u| u.replace('\\', "\\\\").replace(';', "\\;")).collect();
-    kf.set_value("connections", "autoconnect", &list.join(";"));
+    let list = |l: &[String]| -> String {
+        l.iter().map(|u| u.replace('\\', "\\\\").replace(';', "\\;")).collect::<Vec<_>>().join(";")
+    };
+    kf.set_value("connections", "autoconnect", &list(&p.autoconnect));
+    kf.set_value("connections", "remote", &list(&p.remote_connections));
     kf.set_string("connections", "last", &p.last_connection);
     kf.set_integer("stats", "interval", p.stats_interval_secs as i32);
     kf.set_boolean("stats", "cpu", p.stats_cpu);
@@ -288,6 +297,7 @@ mod tests {
     fn round_trips_through_key_file() {
         let p = Prefs {
             autoconnect: vec!["qemu:///system".into(), "qemu:///session".into()],
+            remote_connections: vec!["qemu+ssh://me@server.local/system".into()],
             stats_interval_secs: 5,
             console_scaling: ConsoleScaling::FullscreenOnly,
             xml_editing: true,

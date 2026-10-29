@@ -44,8 +44,19 @@ impl Feedback {
     /// Asks before doing something. `destructive` marks data loss.
     pub fn confirm(&self, heading: &str, body: &str, verb: &str, destructive: bool, on_confirm: impl Fn() + 'static) {
         let dialog = confirm_dialog(heading, body, verb, destructive);
-        dialog.connect_response(Some("confirm"), move |_, _| on_confirm());
+        let on_confirm = std::rc::Rc::new(on_confirm);
+        let f = on_confirm.clone();
+        dialog.connect_response(Some("confirm"), move |_, _| f());
         dialog.present(Some(&self.parent));
+        // Debug builds: VMNG_DEV_CONFIRM=1 answers yes (tests).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("VMNG_DEV_CONFIRM").is_some() {
+            let d = dialog.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                d.close();
+                on_confirm();
+            });
+        }
     }
 }
 

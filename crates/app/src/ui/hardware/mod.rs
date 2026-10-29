@@ -42,6 +42,9 @@ struct HwState {
     uuid: Option<String>,
     name: String,
     active: bool,
+    /// Whether the machine starts when the host boots.
+    autostart: bool,
+    persistent: bool,
     base: Option<Element>,
     rows: Vec<Row>,
     selected: Option<Item>,
@@ -306,6 +309,8 @@ impl HardwareView {
             let mut st = self.state.borrow_mut();
             st.conn = Some(conn);
             st.active = vm.state.is_active();
+            st.autostart = vm.autostart;
+            st.persistent = vm.persistent;
             st.name = vm.config.name.clone();
             st.host = host;
         }
@@ -355,7 +360,8 @@ impl HardwareView {
                             .map(|(p, _)| p)
                             .filter(|p| p.active && p.name != vmng_virt::BOOT_POOL)
                             .collect(),
-                        session: matches!(c.kind(), vmng_virt::ConnectionKind::Session),
+                        session: c.kind().is_session(),
+                        remote: c.kind().is_remote().then(|| c.kind().label()),
                         arch,
                         loaders: caps.loaders,
                         cpu_models: caps.cpu_models,
@@ -467,6 +473,11 @@ impl HardwareView {
         if std::env::var_os("VMNG_DEV_HW_ADD").is_some() {
             self.add_hardware();
         }
+        // VMNG_DEV_HW_ALL_CLEAN=1: opens every page of the list in turn and
+        // fails if just looking at one counts as a change (regression check).
+        if std::env::var_os("VMNG_DEV_HW_ALL_CLEAN").is_some() {
+            self.check_pages_clean(0);
+        }
         // VMNG_DEV_HW_MEMORY=<MiB>: change memory through the editor binding and Apply.
         if let Some(mib) = std::env::var("VMNG_DEV_HW_MEMORY").ok().and_then(|v| v.parse::<u64>().ok()) {
             self.bind(Target::Domain).set(|e| {
@@ -479,6 +490,25 @@ impl HardwareView {
             assert!(self.is_dirty() && self.apply_bar.reveals_child());
             self.save();
         }
+    }
+
+    #[cfg(debug_assertions)]
+    fn check_pages_clean(self: &Rc<Self>, index: usize) {
+        let count = self.state.borrow().rows.len();
+        if index >= count {
+            eprintln!("regression: viewed {count} hardware pages, none changed anything");
+            return;
+        }
+        let row = self.state.borrow().rows[index].row.clone();
+        self.list.select_row(Some(&row));
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+            let Some(this) = weak.upgrade() else { return };
+            let title = this.title.label();
+            assert!(!this.is_dirty(), "viewing the “{title}” page counted as a change");
+            assert!(!this.apply_bar.reveals_child(), "viewing the “{title}” page showed Apply");
+            this.check_pages_clean(index + 1);
+        });
     }
 
     /// Refreshes the titles in the list from the working copy.
@@ -562,11 +592,11 @@ impl HardwareView {
                 "How much of the host this machine may use.".to_owned(),
                 editors::cpu_memory(&self.bind(Target::Domain), &choices, host_cpus, host_mem),
             ),
-            Item::Boot => (
-                "Boot & firmware".to_owned(),
-                "What the machine starts from.".to_owned(),
-                editors::boot(&self.bind(Target::Domain), &choices),
-            ),
+            Item::Boot => {
+                let b = editors::boot(&self.bind(Target::Domain), &choices);
+                b.prepend(&self.autostart_group());
+                ("Boot & firmware".to_owned(), "What the machine starts from.".to_owned(), b)
+            }
             Item::Xml => {
                 let b = editors::xml_view(&self.bind(Target::Domain), xml_editing, true);
                 ("XML".to_owned(), "The complete libvirt configuration of this machine.".to_owned(), b)
@@ -597,6 +627,58 @@ impl HardwareView {
         self.subtitle.set_label(&subtitle);
         self.subtitle.set_visible(!subtitle.is_empty());
         self.editor.append(&body);
+    }
+
+    /// "Start when the host boots": changes right away, not with Apply.
+    fn autostart_group(self: &Rc<Self>) -> adw::PreferencesGroup {
+        let (on, persistent, session) = {
+            let st = self.state.borrow();
+            (st.autostart, st.persistent, st.choices.session)
+        };
+        let group = adw::PreferencesGroup::builder().title("Startup").build();
+        let row = adw::SwitchRow::builder()
+            .title("Start when the host boots")
+            .subtitle(if session {
+                "For a user session: when its libvirt starts, e.g. when you open this app after logging in"
+            } else {
+                "Changes right away"
+            })
+            .active(on)
+            .sensitive(persistent)
+            .build();
+        let weak = Rc::downgrade(self);
+        row.connect_active_notify(move |r| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some((conn, uuid)) = this.conn_uuid() else { return };
+            let on = r.is_active();
+            if this.state.borrow().autostart == on {
+                return;
+            }
+            this.state.borrow_mut().autostart = on;
+            let weak = Rc::downgrade(&this);
+            glib::spawn_future_local(async move {
+                let result = conn.call(move |c| c.set_domain_autostart(&uuid, on)).await;
+                let Some(this) = weak.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        this.feedback.toast(if on { "Starts when the host boots" } else { "No longer starts at boot" });
+                        (this.on_changed)();
+                    }
+                    Err(e) => {
+                        this.state.borrow_mut().autostart = !on;
+                        this.feedback.error("Couldn't change starting at boot", e.message());
+                    }
+                }
+            });
+        });
+        // Debug builds: VMNG_DEV_AUTOSTART=1 turns it on (tests).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("VMNG_DEV_AUTOSTART").is_some() && !on {
+            let r = row.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || r.set_active(true));
+        }
+        group.add(&row);
+        group
     }
 
     fn update_apply_bar(&self) {

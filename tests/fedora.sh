@@ -17,6 +17,7 @@ check code-format inbox cargo fmt --all --check
 check lint inbox cargo clippy --workspace --all-targets -- -D warnings
 check lint-debian13-variant inbox cargo clippy -p virt-manager-nextgen --all-targets --no-default-features -- -D warnings
 check unit-tests inbox cargo test --workspace
+check regression-tests inbox cargo test -p vmng-virt --test regressions
 check build inbox cargo build --workspace --all-targets
 inbox sh -c ". tests/lib.sh && make_iso '$OUT/test.iso'" >/dev/null 2>&1
 
@@ -32,8 +33,14 @@ pool=vmng-test-pipeline
 mkdir -p "$OUT/pool"
 virsh -c qemu:///session pool-create-as "$pool" dir --target "$OUT/pool" >"$OUT/pool.log" 2>&1
 
-BIN="$PWD/target/debug" OUT="$OUT" ISO="$OUT/test.iso" POOL="$pool" \
+# The "other computer" for the remote checks: a Debian container with its
+# own libvirt, reached over SSH on 127.0.0.1:22222.
+remote=$(sh tests/remote-host.sh start "$OUT/remote" 22222 2>"$OUT/remote-host.log")
+
+BIN="$PWD/target/debug" OUT="$OUT" ISO="$OUT/test.iso" POOL="$pool" REMOTE_URI="$remote" \
     VM_URI=qemu:///session NET_URI=qemu:///system WAYLAND_DISPLAY=vmng-test sh tests/suite.sh
+
+sh tests/remote-host.sh stop
 
 virsh -c qemu:///session pool-destroy "$pool" >>"$OUT/pool.log" 2>&1
 [ -n "$started_mutter" ] && kill "$started_mutter"

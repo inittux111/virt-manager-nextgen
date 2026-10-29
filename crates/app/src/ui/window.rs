@@ -20,7 +20,7 @@ use super::vm_details::VmDetails;
 use super::vm_dialogs::{clone_dialog, delete_dialog, rename_dialog};
 use super::vm_list::VmList;
 use super::vm_page::{VmPage, VmTab};
-use super::widgets::ListDetail;
+use super::widgets::{FormDialog, ListDetail};
 use crate::backend::{Conn, Monitor, Sample};
 use crate::format;
 use crate::settings::Settings;
@@ -116,7 +116,31 @@ pub struct MainWindow {
     job: JobBar,
     search_bar: gtk::SearchBar,
     search_button: gtk::ToggleButton,
+    /// The Connection section of the main menu.
+    conn_menu: gio::Menu,
     state: RefCell<State>,
+}
+
+/// Added to a failed SSH connection's message.
+const REMOTE_HINT: &str = "\n\nThe app logs in with your SSH key. Set it up with “ssh-copy-id user@computer”, and \
+connect once with “ssh user@computer” in a terminal to accept the computer's key. The other computer needs \
+libvirt running.";
+
+/// The `win.connection` target of a connection.
+fn connection_id(kind: &ConnectionKind) -> String {
+    match kind {
+        ConnectionKind::System => "system".into(),
+        ConnectionKind::Session => "session".into(),
+        ConnectionKind::Other(uri) => uri.clone(),
+    }
+}
+
+fn connection_of(id: &str) -> ConnectionKind {
+    match id {
+        "system" => ConnectionKind::System,
+        "session" => ConnectionKind::Session,
+        uri => ConnectionKind::Other(uri.to_owned()),
+    }
 }
 
 impl std::fmt::Debug for MainWindow {
@@ -190,8 +214,6 @@ impl MainWindow {
         let main_menu = gio::Menu::new();
         let section = gio::Menu::new();
         let conns = gio::Menu::new();
-        conns.append(Some("QEMU/KVM · System"), Some("win.connection::system"));
-        conns.append(Some("QEMU/KVM · User Session"), Some("win.connection::session"));
         main_menu.append_section(Some("Connection"), &conns);
         section.append(Some("Preferences"), Some("app.preferences"));
         section.append(Some("Keyboard Shortcuts"), Some("app.shortcuts"));
@@ -204,6 +226,12 @@ impl MainWindow {
             .tooltip_text("Main menu")
             .build();
         header.pack_end(&menu_button);
+        // Debug builds: VMNG_DEV_MAIN_MENU=1 opens the main menu (screenshots).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("VMNG_DEV_MAIN_MENU").is_some() {
+            let b = menu_button.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || b.popup());
+        }
 
         // The view's main action (New VM, New Network): a plain "+" at the
         // start, as in GNOME's own apps.
@@ -387,6 +415,7 @@ impl MainWindow {
             job,
             search_bar,
             search_button,
+            conn_menu: conns,
             state: RefCell::new(State {
                 view: View::Machines,
                 current,
@@ -411,6 +440,7 @@ impl MainWindow {
         });
 
         me.replace(Rc::downgrade(&this));
+        this.fill_connection_menu();
         this.setup_actions();
         this.wire(&search_entry, &retry);
         this.update_chrome();
@@ -463,20 +493,33 @@ impl MainWindow {
                 this.set_view(view);
             }
         });
-        // `win.connection::system|session` (main menu) switches connection.
-        let current = match self.state.borrow().current {
-            ConnectionKind::Session => "session",
-            _ => "system",
-        };
+        // `win.connection::system|session|<address>` (main menu) switches connection.
+        let current = connection_id(&self.state.borrow().current);
         let conn = gio::SimpleAction::new_stateful("connection", Some(glib::VariantTy::STRING), &current.to_variant());
         let weak = Rc::downgrade(self);
         conn.connect_activate(move |a, p| {
             let (Some(this), Some(id)) = (weak.upgrade(), p.and_then(|v| v.get::<String>())) else { return };
             a.set_state(&id.to_variant());
-            let kind = if id == "session" { ConnectionKind::Session } else { ConnectionKind::System };
-            this.switch_connection(kind);
+            this.switch_connection(connection_of(&id));
         });
         self.window.add_action(&conn);
+        let add = gio::SimpleAction::new("add-connection", None);
+        let weak = Rc::downgrade(self);
+        add.connect_activate(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.add_connection_dialog();
+            }
+        });
+        self.window.add_action(&add);
+        let remove = gio::SimpleAction::new("remove-connection", None);
+        let weak = Rc::downgrade(self);
+        remove.connect_activate(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.ask_remove_connection();
+            }
+        });
+        remove.set_enabled(self.state.borrow().current.is_remote());
+        self.window.add_action(&remove);
         // `win.view::<id>` switches views (Ctrl+1…4).
         let view = gio::SimpleAction::new("view", Some(glib::VariantTy::STRING));
         let weak = Rc::downgrade(self);
@@ -688,8 +731,10 @@ impl MainWindow {
         let status = self.status_of(&current);
         self.vm_list.set_connection(&format!("QEMU/KVM · {}", connection_name(&current)));
         if let Some(a) = self.window.lookup_action("connection").and_downcast::<gio::SimpleAction>() {
-            let id = if current == ConnectionKind::Session { "session" } else { "system" };
-            a.set_state(&id.to_variant());
+            a.set_state(&connection_id(&current).to_variant());
+        }
+        if let Some(a) = self.window.lookup_action("remove-connection").and_downcast::<gio::SimpleAction>() {
+            a.set_enabled(current.is_remote());
         }
         let name = connection_name(&current);
         let has_data = !self.state.borrow().domains.is_empty() || self.vm_list_loaded();
@@ -738,11 +783,141 @@ impl MainWindow {
                     }
                 }
                 Err(e) => {
-                    this.state.borrow_mut().conns.insert(kind, Slot::Failed(e.message().to_owned()));
+                    let mut msg = e.message().to_owned();
+                    if kind.is_remote() {
+                        msg.push_str(REMOTE_HINT);
+                    }
+                    this.state.borrow_mut().conns.insert(kind, Slot::Failed(msg));
                 }
             }
             this.update_chrome();
         });
+    }
+
+    /// The Connection section: this computer, then the other computers.
+    fn fill_connection_menu(&self) {
+        let menu = &self.conn_menu;
+        menu.remove_all();
+        menu.append(Some("QEMU/KVM · System"), Some("win.connection::system"));
+        menu.append(Some("QEMU/KVM · User Session"), Some("win.connection::session"));
+        for uri in self.settings.get().remote_connections {
+            let label = format!("QEMU/KVM · {}", ConnectionKind::Other(uri.clone()).label());
+            let item = gio::MenuItem::new(Some(&label), None);
+            item.set_action_and_target_value(Some("win.connection"), Some(&uri.to_variant()));
+            menu.append_item(&item);
+        }
+        menu.append(Some("Add Remote Computer…"), Some("win.add-connection"));
+        menu.append(Some("Remove This Connection"), Some("win.remove-connection"));
+    }
+
+    /// Asks for another computer to connect to over SSH.
+    fn add_connection_dialog(self: &Rc<Self>) {
+        let form = FormDialog::new("Add Remote Computer", "Connect");
+        let group = adw::PreferencesGroup::builder()
+            .description(
+                "Manage the virtual machines of another computer over SSH. The app logs in with your SSH key; \
+                 set it up first with: ssh-copy-id user@computer",
+            )
+            .build();
+        let host = adw::EntryRow::builder().title("Computer (name or address)").build();
+        let user =
+            adw::EntryRow::builder().title("User name").text(glib::user_name().to_string_lossy().into_owned()).build();
+        let port =
+            adw::EntryRow::builder().title("SSH port (empty = 22)").input_purpose(gtk::InputPurpose::Digits).build();
+        let kind = adw::ComboRow::builder()
+            .title("Machines")
+            .model(&gtk::StringList::new(&["System", "User session"]))
+            .build();
+        let startup = adw::SwitchRow::builder().title("Connect at startup").build();
+        for w in [
+            host.upcast_ref::<gtk::Widget>(),
+            user.upcast_ref(),
+            port.upcast_ref(),
+            kind.upcast_ref(),
+            startup.upcast_ref(),
+        ] {
+            group.add(w);
+        }
+        form.add(&group);
+        // Debug builds: VMNG_DEV_REMOTE=<address> fills it in (tests).
+        #[cfg(debug_assertions)]
+        if let Some(t) = std::env::var("VMNG_DEV_REMOTE").ok().and_then(|u| vmng_virt::SshTarget::parse(&u)) {
+            host.set_text(&t.host);
+            user.set_text(t.user.as_deref().unwrap_or_default());
+            port.set_text(&t.port.map(|p| p.to_string()).unwrap_or_default());
+        }
+        let weak = Rc::downgrade(self);
+        form.connect_primary(move |form| {
+            let Some(this) = weak.upgrade() else { return };
+            let port_text = port.text().trim().to_owned();
+            let port = if port_text.is_empty() {
+                None
+            } else {
+                match port_text.parse::<u16>() {
+                    Ok(p) if p > 0 => Some(p),
+                    _ => return form.set_error(Some("The port must be a number between 1 and 65535.")),
+                }
+            };
+            let user = Some(user.text().trim().to_owned()).filter(|u| !u.is_empty());
+            #[allow(unused_mut)]
+            let mut target = vmng_virt::SshTarget {
+                user,
+                host: host.text().trim().to_owned(),
+                port,
+                session: kind.selected() == 1,
+                ..Default::default()
+            };
+            // Tests reach the test computer with their own key.
+            #[cfg(debug_assertions)]
+            if let Some(t) = std::env::var("VMNG_DEV_REMOTE").ok().and_then(|u| vmng_virt::SshTarget::parse(&u)) {
+                target.keyfile = t.keyfile;
+                target.no_verify = t.no_verify;
+            }
+            if let Err(m) = target.validate() {
+                return form.set_error(Some(m));
+            }
+            let uri = target.uri();
+            let at_startup = startup.is_active();
+            this.settings.update(|p| {
+                if !p.remote_connections.contains(&uri) {
+                    p.remote_connections.push(uri.clone());
+                }
+                if at_startup && !p.autoconnect.contains(&uri) {
+                    p.autoconnect.push(uri.clone());
+                }
+            });
+            form.close();
+            this.fill_connection_menu();
+            this.switch_connection(ConnectionKind::Other(uri));
+        });
+        form.present(&self.window);
+    }
+
+    /// Forgets the current other computer and goes back to this one.
+    fn ask_remove_connection(self: &Rc<Self>) {
+        let kind = self.state.borrow().current.clone();
+        if !kind.is_remote() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        let label = kind.label();
+        self.feedback.confirm(
+            &format!("Remove {label}?"),
+            "The app stops showing this computer. Its machines keep running there.",
+            "Remove",
+            true,
+            move || {
+                let Some(this) = weak.upgrade() else { return };
+                let uri = kind.uri().to_owned();
+                this.settings.update(|p| {
+                    p.remote_connections.retain(|u| *u != uri);
+                    p.autoconnect.retain(|u| *u != uri);
+                });
+                this.switch_connection(ConnectionKind::System);
+                this.state.borrow_mut().conns.remove(&kind);
+                this.fill_connection_menu();
+            },
+        );
     }
 
     async fn on_connected(self: &Rc<Self>, conn: Conn) {
@@ -1189,7 +1364,7 @@ impl MainWindow {
         };
         let (session, host, domains) = {
             let st = self.state.borrow();
-            (st.current == ConnectionKind::Session, st.host_info.clone(), st.domains.clone())
+            (st.current.is_session(), st.host_info.clone(), st.domains.clone())
         };
         let ctx = super::new_vm::WizardContext {
             conn,

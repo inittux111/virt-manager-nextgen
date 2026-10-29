@@ -27,6 +27,11 @@ impl Conn {
         self.0.kind()
     }
 
+    /// The other computer's name, for a connection over SSH.
+    pub fn remote_name(&self) -> Option<String> {
+        self.kind().is_remote().then(|| self.kind().label())
+    }
+
     /// Runs `f` with the connection on a worker thread.
     pub async fn call<R, F>(&self, f: F) -> Result<R>
     where

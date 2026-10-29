@@ -105,6 +105,9 @@ Done after the virt-manager comparison, second round (0.4.0)
 - New VM wizard: use an existing disk image as the machine's disk (the installer still starts), or no disk
 - Networks: view and edit a network's XML (with "Allow editing the raw XML")
 - Preferences → General → Appearance: follow the system, light or dark
+- Other computers over SSH (Add Remote Computer in the main menu; SSH key login; screens through an SSH tunnel)
+- Starting a machine when the host boots (Boot & firmware → Startup)
+- Regression tests: one per fixed bug (crates/virt/tests/regressions.rs, locally and on GitHub) and a "viewing changes nothing" check of every hardware page
 
 Still open from the comparison (the user decides later)
 - Not recommended for a desktop: direct kernel boot, rare devices (parallel, watchdog, smartcard, panic, vsock, mediated devices), more pool types, TPM 1.2 / passthrough

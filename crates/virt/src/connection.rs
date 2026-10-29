@@ -37,11 +37,36 @@ impl ConnectionKind {
         }
     }
 
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> String {
         match self {
-            Self::System => "QEMU/KVM",
-            Self::Session => "QEMU/KVM user session",
-            Self::Other(uri) => uri,
+            Self::System => "QEMU/KVM".into(),
+            Self::Session => "QEMU/KVM user session".into(),
+            Self::Other(uri) => self.ssh_target().map_or_else(|| uri.clone(), |t| t.label()),
+        }
+    }
+
+    /// The other computer, for a connection over SSH.
+    pub fn ssh_target(&self) -> Option<crate::remote::SshTarget> {
+        match self {
+            Self::Other(uri) => crate::remote::SshTarget::parse(uri),
+            _ => None,
+        }
+    }
+
+    /// Whether the machines run on another computer.
+    pub fn is_remote(&self) -> bool {
+        match self {
+            Self::System | Self::Session => false,
+            Self::Other(uri) => !uri.contains(":///"),
+        }
+    }
+
+    /// Whether this is a user session (here or on another computer).
+    pub fn is_session(&self) -> bool {
+        match self {
+            Self::System => false,
+            Self::Session => true,
+            Self::Other(uri) => uri.split('?').next().is_some_and(|u| u.trim_end_matches('/').ends_with("/session")),
         }
     }
 }

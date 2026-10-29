@@ -710,7 +710,8 @@ impl Wizard {
         // Installer images: pools first, then an optical drive if present.
         st.media =
             data.images.iter().map(|i| (format!("{} · {}", i.name, format::bytes(i.size)), i.path.clone())).collect();
-        if std::path::Path::new("/dev/sr0").exists() {
+        // This computer's optical drive, unless the machines run elsewhere.
+        if !self.ctx.conn.kind().is_remote() && std::path::Path::new("/dev/sr0").exists() {
             st.media.push(("Optical drive (/dev/sr0)".into(), "/dev/sr0".into()));
         }
         let labels: Vec<String> = st.media.iter().map(|(l, _)| l.clone()).collect();
@@ -1163,47 +1164,43 @@ impl Wizard {
                 filter.add_suffix(s);
             }
         }
-        let filters = gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&filter);
-        let dialog = gtk::FileDialog::builder()
-            .title(if media { "Choose an Installer Image" } else { "Choose a Disk Image" })
-            .filters(&filters)
-            .default_filter(&filter)
-            .modal(true)
-            .build();
-        let window = self.dialog.root().and_downcast::<gtk::Window>();
         let weak = Rc::downgrade(self);
-        glib::spawn_future_local(async move {
-            let Ok(file) = dialog.open_future(window.as_ref()).await else { return };
-            let Some(path) = file.path().map(|p| p.to_string_lossy().into_owned()) else { return };
-            let Some(w) = weak.upgrade() else { return };
-            if media {
-                let index = {
-                    let mut st = w.state.borrow_mut();
-                    match st.media.iter().position(|(_, p)| *p == path) {
-                        Some(i) => i,
-                        None => {
-                            let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
-                            st.media.push((name, path.clone()));
-                            st.media.len() - 1
+        super::widgets::pick_host_path(
+            self.dialog.upcast_ref(),
+            self.ctx.conn.remote_name().as_deref(),
+            false,
+            if media { "Choose an Installer Image" } else { "Choose a Disk Image" },
+            Some(filter),
+            move |path| {
+                let Some(w) = weak.upgrade() else { return };
+                if media {
+                    let index = {
+                        let mut st = w.state.borrow_mut();
+                        match st.media.iter().position(|(_, p)| *p == path) {
+                            Some(i) => i,
+                            None => {
+                                let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+                                st.media.push((name, path.clone()));
+                                st.media.len() - 1
+                            }
                         }
-                    }
-                };
-                let labels: Vec<String> = w.state.borrow().media.iter().map(|(l, _)| l.clone()).collect();
-                w.updating.set(true);
-                w.media_row.set_model(Some(&string_list(&labels)));
-                w.media_row.set_selected(index as u32);
-                w.updating.set(false);
-                w.detect();
-            } else if target == Browse::ExistingDisk {
-                w.set_existing_disk(path);
-            } else {
-                w.import_row.set_subtitle(&glib::markup_escape_text(&path));
-                w.state.borrow_mut().import_path = Some(path);
-                w.show_os();
-                w.update_buttons();
-            }
-        });
+                    };
+                    let labels: Vec<String> = w.state.borrow().media.iter().map(|(l, _)| l.clone()).collect();
+                    w.updating.set(true);
+                    w.media_row.set_model(Some(&string_list(&labels)));
+                    w.media_row.set_selected(index as u32);
+                    w.updating.set(false);
+                    w.detect();
+                } else if target == Browse::ExistingDisk {
+                    w.set_existing_disk(path);
+                } else {
+                    w.import_row.set_subtitle(&glib::markup_escape_text(&path));
+                    w.state.borrow_mut().import_path = Some(path);
+                    w.show_os();
+                    w.update_buttons();
+                }
+            },
+        );
     }
 
     fn set_existing_disk(&self, path: String) {

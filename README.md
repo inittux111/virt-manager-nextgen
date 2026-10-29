@@ -15,6 +15,9 @@ Everything below is also in virt-manager.
 **Connections**
 - The local QEMU/KVM System connection and User session, connected at
   startup if you choose
+- Other computers over SSH (their System connection or a user session),
+  logging in with your SSH key; their machines' screens come through an SSH
+  tunnel
 
 **Creating machines**
 - Install from an installer image (ISO) or the computer's optical drive
@@ -31,6 +34,7 @@ Everything below is also in virt-manager.
 **Managing machines**
 - Start, shut down, reboot, force off, reset, pause and resume
 - Save and stop (and discard the saved state)
+- Start a machine when the host boots (autostart)
 - Clone, rename and delete (choosing which disks to delete)
 - Snapshots: inside the disk or as separate files, with or without the
   memory, with a picture of the screen; revert and delete
@@ -80,12 +84,12 @@ Everything below is also in virt-manager.
 
 virt-manager has these, but virt-manager-nextgen doesn't:
 
-- Connections to other computers (over SSH or TLS) and to other hypervisors
-  (Xen, LXC, bhyve and others): only this computer's QEMU/KVM
+- Connections over TLS or with a password typed into the app (SSH with a
+  key works), and other hypervisors (Xen, LXC, bhyve and others): only
+  QEMU/KVM
 - Moving a running machine to another computer (migration)
 - Passing a USB or PCI device of the host to a machine, USB redirection from
   the console, and mediated devices (e.g. a share of a graphics card)
-- Starting a machine when the host boots (autostart)
 - Booting a machine straight from a kernel file (direct kernel boot)
 - Rarely used devices: parallel port, watchdog, smartcard, panic notifier,
   VSOCK
@@ -243,7 +247,9 @@ One command checks that every feature still works, on both systems:
 For each system it runs:
 
 1. **Code checks**: formatting, the lint check (both the full build and the
-   Debian 13 variant) and all unit tests.
+   Debian 13 variant), all unit tests, and the **regression tests**: one test
+   for each bug that was found and fixed (`crates/virt/tests/regressions.rs`),
+   so it can't come back unnoticed.
 2. **Real libvirt checks with throwaway VMs**:
    - create, start and delete a VM
    - snapshots, clone, rename and delete
@@ -263,6 +269,13 @@ For each system it runs:
    - snapshots inside the disk and as separate files
    - virtual networks (also edited as XML) and storage pools, with fully
      allocated volumes and a volume based on another image
+   - starting a machine when the host boots (autostart), here and on another
+     computer
+   - **another computer over SSH**: a separate Debian container with its own
+     libvirt plays the other computer (on Debian 13 the container connects to
+     itself). The app adds it from the Add Remote Computer dialog, lists its
+     machines, shows a machine's screen through the SSH tunnel and the text
+     console, and removes it again
 3. **Screens**: a screenshot of every main screen (machines, hardware,
    firmware, overview, Add Hardware, snapshots, performance, the console and
    text console, host, networks and a network's XML, storage and New Volume,
@@ -271,6 +284,9 @@ For each system it runs:
    contrast), with a running test VM. Each must render without errors.
    Editing a network's XML in the app and creating a VM on an existing disk
    are checked in libvirt afterwards.
+4. **Regression checks in the app**: every hardware page of a test VM is
+   opened in turn, and the check fails if just looking at one counts as a
+   change.
 
 Where it runs:
 
@@ -293,8 +309,9 @@ things feel on a real Debian desktop.
 ### On GitHub
 
 A light version runs automatically on GitHub on every push and pull request
-(`.github/workflows/ci.yml`): formatting, the lint check, unit tests and a
-full build, for Fedora 44 and Debian 13 (about 5 minutes). The repository
+(`.github/workflows/ci.yml`): formatting, the lint check, unit tests, the
+regression tests and a full build, for Fedora 44 and Debian 13 (about 5
+minutes). Changes to only `.md` files (like this README) don't start it. The repository
 page shows a green or red mark for the latest code, and GitHub emails you
 when it fails. The VM and screen tests need this computer's KVM, so they
 only run with `./test-pipeline.sh`.

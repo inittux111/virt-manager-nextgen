@@ -169,6 +169,13 @@ pub fn normalize_mac(mac: &str) -> std::result::Result<String, &'static str> {
 }
 
 impl Connection {
+    /// Starts the machine when the host boots (for a user session: when
+    /// its libvirt starts).
+    pub fn set_domain_autostart(&self, uuid: &str, on: bool) -> Result<()> {
+        self.domain(uuid)?.set_autostart(on)?;
+        Ok(())
+    }
+
     /// Shows a new title and description on a running machine right away
     /// (the saved configuration is changed separately).
     pub fn set_live_title(&self, uuid: &str, title: Option<&str>, description: Option<&str>) -> Result<()> {

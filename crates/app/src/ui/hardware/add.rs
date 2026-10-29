@@ -71,29 +71,29 @@ fn value(row: &adw::ComboRow, values: &[String]) -> String {
     values.get(row.selected() as usize).cloned().unwrap_or_default()
 }
 
-/// Lets the person pick a file or folder and shows it in `row`.
-fn browse_button(row: &adw::ActionRow, path: Rc<RefCell<Option<String>>>, folder: bool) -> gtk::Button {
+/// Lets the person pick a file or folder where the machine runs and shows
+/// it in `row`.
+fn browse_button(
+    row: &adw::ActionRow,
+    path: Rc<RefCell<Option<String>>>,
+    folder: bool,
+    remote: Option<String>,
+) -> gtk::Button {
     let button = gtk::Button::builder().label("Browse…").valign(gtk::Align::Center).build();
     let row = row.clone();
     button.connect_clicked(move |b| {
-        let dialog = gtk::FileDialog::builder()
-            .title(if folder { "Choose a Folder to Share" } else { "Choose a Disk Image" })
-            .modal(true)
-            .build();
-        let window = b.root().and_downcast::<gtk::Window>();
         let (row, path) = (row.clone(), path.clone());
-        glib::spawn_future_local(async move {
-            let file = if folder {
-                dialog.select_folder_future(window.as_ref()).await
-            } else {
-                dialog.open_future(window.as_ref()).await
-            };
-            if let Some(p) = file.ok().and_then(|f| f.path()) {
-                let p = p.to_string_lossy().into_owned();
+        crate::ui::widgets::pick_host_path(
+            b.upcast_ref(),
+            remote.as_deref(),
+            folder,
+            if folder { "Choose a Folder to Share" } else { "Choose a Disk Image" },
+            None,
+            move |p| {
                 row.set_subtitle(&glib::markup_escape_text(&p));
                 path.replace(Some(p));
-            }
-        });
+            },
+        );
     });
     button
 }
@@ -141,7 +141,7 @@ fn storage_page(ctx: &AddContext) -> Page {
         choice("Format", &[("qcow2", "qcow2 (grows as needed, snapshots)"), ("raw", "raw (fastest, full size)")]);
     let path = Rc::new(RefCell::new(None::<String>));
     let file_row = adw::ActionRow::builder().title("Image file").subtitle("No file chosen").build();
-    file_row.add_suffix(&browse_button(&file_row, path.clone(), false));
+    file_row.add_suffix(&browse_button(&file_row, path.clone(), false, ctx.conn.remote_name()));
     let (bus, buses) =
         choice("Bus", &[("virtio", "VirtIO (fastest)"), ("sata", "SATA"), ("scsi", "SCSI"), ("usb", "USB")]);
     for w in [
@@ -237,11 +237,11 @@ fn controller_page() -> Page {
     Page { title: "Controller", icon: "drive-multidisk-symbolic", section: None, widget: b.upcast(), build }
 }
 
-fn shared_folder_page() -> Page {
+fn shared_folder_page(remote: Option<String>) -> Page {
     let (b, g) = form("Share a folder of the host with the guest.");
     let path = Rc::new(RefCell::new(None::<String>));
     let folder = adw::ActionRow::builder().title("Folder on the host").subtitle("No folder chosen").build();
-    folder.add_suffix(&browse_button(&folder, path.clone(), true));
+    folder.add_suffix(&browse_button(&folder, path.clone(), true, remote));
     let tag = adw::EntryRow::builder().title("Name in the guest (mount tag)").build();
     let readonly = adw::SwitchRow::builder()
         .title("Read-only")
@@ -350,7 +350,7 @@ fn pages(ctx: &AddContext) -> Vec<Page> {
     vec![
         storage_page(ctx),
         controller_page(),
-        shared_folder_page(),
+        shared_folder_page(ctx.conn.remote_name()),
         network_page(&ctx.choices),
         simple_page(
             "Graphics",

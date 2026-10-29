@@ -1,12 +1,15 @@
-# The light version of ./test-pipeline.sh: code checks, unit tests and a full
-# build on Fedora 44 and Debian 13, on every push and pull request (including
+# The light version of ./test-pipeline.sh: code checks, unit tests, regression
+# tests and a full build on Fedora 44 and Debian 13, on every push and pull request (including
 # Dependabot's). The VM and screen tests run locally with ./test-pipeline.sh.
 name: Build and test
 
+# Changes to documentation only (README and other .md files) don't run it.
 on:
   push:
     branches: [master]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 concurrency:
@@ -43,6 +46,8 @@ jobs:
         run: cargo clippy -p virt-manager-nextgen --all-targets --no-default-features -- -D warnings
       - name: Unit tests
         run: cargo test --workspace
+      - name: Regression tests (one per fixed bug)
+        run: cargo test -p vmng-virt --test regressions
       - name: Build
         run: cargo build --workspace --all-targets
       - name: App metadata
@@ -78,5 +83,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       - name: Unit tests
         run: cargo test --workspace --no-default-features
+      - name: Regression tests (one per fixed bug)
+        run: cargo test -p vmng-virt --test regressions
       - name: Build
         run: cargo build --workspace --all-targets --no-default-features

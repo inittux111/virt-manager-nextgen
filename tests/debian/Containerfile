@@ -8,4 +8,5 @@ RUN apt-get update \
         libvirt-daemon-system libvirt-clients qemu-system-x86 qemu-utils \
         qemu-system-modules-spice ovmf swtpm swtpm-tools librsvg2-common \
         osinfo-db xorriso dnsmasq-base iproute2 nftables virtiofsd \
+        openssh-server openssh-client netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*

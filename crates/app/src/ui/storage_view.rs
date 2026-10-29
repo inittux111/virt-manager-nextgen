@@ -370,7 +370,9 @@ impl StorageView {
             },
         );
         self.toggle.set_label(if p.active { "Stop Pool" } else { "Start Pool" });
-        self.browse.set_visible(p.kind == PoolKind::Folder && p.path.is_some());
+        // Opens the folder in the file manager: only for this computer's pools.
+        let remote = self.state.borrow().conn.as_ref().is_some_and(|c| c.kind().is_remote());
+        self.browse.set_visible(p.kind == PoolKind::Folder && p.path.is_some() && !remote);
         self.new_volume.set_sensitive(p.active);
         self.kind.set_label(p.kind.label());
         self.source.set_label(p.source.as_deref().unwrap_or("—"));
@@ -713,6 +715,8 @@ impl StorageView {
                 _ => "Shared folder on the server",
             });
         });
+        // The folder is on the other computer for an SSH connection: typed in.
+        browse.set_visible(!self.state.borrow().conn.as_ref().is_some_and(|c| c.kind().is_remote()));
         let p = path.clone();
         browse.connect_clicked(move |b| {
             let dialog = gtk::FileDialog::builder().title("Choose a Folder for the Pool").modal(true).build();
