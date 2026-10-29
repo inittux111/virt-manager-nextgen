@@ -355,6 +355,27 @@ also keeps the workflow's GitHub Actions current. The system libraries
 normal system updates; the GitHub check always uses the newest Fedora 44
 and Debian 13 images, so an update that breaks the build shows up there.
 
+### Security updates
+
+- **Rust crates** (the libraries built into the app): a GitHub check,
+  *Security check* (`.github/workflows/security.yml`), runs `cargo audit`
+  once a week and whenever the crate list changes. It compares every crate
+  with the RustSec database of known security problems, unmaintained and
+  withdrawn crates. Dependabot also sends alerts and pull requests with
+  fixes, and `./maintenance.sh` runs the same audit locally.
+- **GTK, libadwaita, libvirt, QEMU and the other system libraries** come from
+  Fedora, Debian or Arch, so their security fixes arrive with normal system
+  updates (`dnf upgrade`, `apt upgrade`, `pacman -Syu`), without a new app
+  release.
+
+When the security check turns red (GitHub emails you): the details name the
+crate and the problem. Update the crate when a fixed version exists (or merge
+Dependabot's pull request once its checks are green), run the tests, and
+make a small release if the installed app is affected, since crates are built
+into it. Without a fix, check whether the app uses the affected part; if not,
+record a reviewed exception with the reason in `.cargo/audit.toml`.
+"Unmaintained" warnings aren't urgent: plan a switch to a maintained crate.
+
 ## Running VMs
 
 The app talks to libvirt. To run machines on the same computer, the libvirt

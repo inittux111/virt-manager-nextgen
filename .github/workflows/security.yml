@@ -1,0 +1,36 @@
+# Security check: `cargo audit` compares every Rust crate in Cargo.lock with
+# the RustSec advisory database (known security problems, unmaintained or
+# withdrawn crates). Runs once a week, even without changes (new problems
+# are found in old code too), and whenever the crate list changes. A red
+# check means a crate needs attention; see README → Security updates.
+name: Security check
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  push:
+    branches: [master]
+    paths: ['Cargo.lock', '.github/workflows/security.yml']
+  pull_request:
+    paths: ['Cargo.lock', '.github/workflows/security.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+      - name: Install cargo-audit
+        run: command -v cargo-audit || cargo install --locked cargo-audit
+      - name: Check the crates against the RustSec advisory database
+        # Warnings (unmaintained, withdrawn) fail the check too, so they are
+        # seen; a reviewed exception goes in .cargo/audit.toml with a reason.
+        run: cargo audit --deny warnings
