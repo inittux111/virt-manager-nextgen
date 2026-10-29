@@ -189,12 +189,21 @@ build, but the app isn't checked on Arch by the test pipeline, and Arch's
 fast-moving updates can break it at any time. Fedora 44 and Debian 13 are the
 supported systems.
 
-Build it in a podman container with the newest Arch Linux (nothing is
-installed on your computer), then install it on Arch:
+The [latest release](https://github.com/inittux111/virt-manager-nextgen/releases/latest)
+has a ready-made Arch package: `sudo pacman -U ./virt-manager-nextgen-<version>-1-x86_64.pkg.tar.zst`.
+
+To build it yourself on Arch, put the recipe and the release's source file
+(`virt-manager-nextgen-<version>.tar.gz`) in one folder and run:
+
+```sh
+makepkg -si
+```
+
+From another system (e.g. Fedora), build it in a podman container with the
+newest Arch Linux (nothing is installed on your computer):
 
 ```sh
 ./build-arch.sh                     # → target/arch/virt-manager-nextgen-<version>-1-x86_64.pkg.tar.zst
-sudo pacman -U ./target/arch/virt-manager-nextgen-*.pkg.tar.zst
 ```
 
 To run machines on the same computer, also install `qemu-desktop`,
