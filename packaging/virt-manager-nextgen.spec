@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        0.3.0
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -91,6 +91,13 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Thu Oct 29 2026 Maarten <github@feedmebits.nl> - 1.0.0-1
+- README: credits
+- README: guest agent and remote computer setup; libguestfs entry clarified
+- Remote computers over SSH, autostart, regression tests
+- README: personal-use project, features compared with virt-manager, use at your own risk
+- Machine options, network XML editing and an appearance setting
+
 * Thu Oct 29 2026 Maarten <github@feedmebits.nl> - 0.3.0-1
 - Tests: PXE check with user networking; network install screenshot within the time limit
 - Network install and PXE in the New VM wizard
