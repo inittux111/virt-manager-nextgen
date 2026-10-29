@@ -181,6 +181,26 @@ podman rmi localhost/virt-manager-nextgen-debian:trixie
 podman volume rm virt-manager-nextgen-cargo
 ```
 
+## Arch Linux: unofficial, not tested
+
+There is an **unofficial** Arch Linux package recipe
+(`packaging/arch/PKGBUILD`). It **is not tested**: the package is known to
+build, but the app isn't checked on Arch by the test pipeline, and Arch's
+fast-moving updates can break it at any time. Fedora 44 and Debian 13 are the
+supported systems.
+
+Build it in a podman container with the newest Arch Linux (nothing is
+installed on your computer), then install it on Arch:
+
+```sh
+./build-arch.sh                     # → target/arch/virt-manager-nextgen-<version>-1-x86_64.pkg.tar.zst
+sudo pacman -U ./target/arch/virt-manager-nextgen-*.pkg.tar.zst
+```
+
+To run machines on the same computer, also install `qemu-desktop`,
+`dnsmasq` and `edk2-ovmf` (and `swtpm` for TPM 2.0, `virtiofsd` for shared
+folders), and start libvirt: `sudo systemctl enable --now libvirtd`.
+
 ## The build scripts
 
 Both scripts run on your computer and do the actual building in a container.

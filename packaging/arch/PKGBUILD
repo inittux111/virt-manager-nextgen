@@ -1,0 +1,43 @@
+# Unofficial Arch Linux package (not tested on Arch). Built by
+# ./build-arch.sh, which puts the source tarball next to this file and sets
+# pkgver from Cargo.toml.
+pkgname=virt-manager-nextgen
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="Manage QEMU/KVM virtual machines through libvirt (unofficial, untested Arch build)"
+arch=('x86_64')
+url="https://github.com/inittux111/virt-manager-nextgen"
+license=('GPL-3.0-or-later')
+depends=('gtk4' 'libadwaita' 'libvirt' 'libosinfo' 'osinfo-db' 'spice-gtk' 'gtk-vnc' 'vte4' 'hicolor-icon-theme')
+makedepends=('rust' 'pkgconf')
+optdepends=(
+    'qemu-desktop: run machines on this computer'
+    'dnsmasq: virtual networks'
+    'edk2-ovmf: UEFI firmware'
+    'swtpm: TPM 2.0'
+    'virtiofsd: shared folders with virtiofs'
+    'openssh: remote computers over SSH'
+)
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+options=('!debug')
+_app_id=io.github.inittux111.VirtManagerNextgen
+
+build() {
+    cd "$pkgname-$pkgver"
+    # Keep cargo's cache inside the build tree.
+    export CARGO_HOME="${CARGO_HOME:-$srcdir/cargo-home}"
+    cargo build --release --locked -p virt-manager-nextgen
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 target/release/virt-manager-nextgen "$pkgdir/usr/bin/virt-manager-nextgen"
+    install -Dm644 "data/$_app_id.desktop" "$pkgdir/usr/share/applications/$_app_id.desktop"
+    install -Dm644 "data/$_app_id.metainfo.xml" "$pkgdir/usr/share/metainfo/$_app_id.metainfo.xml"
+    install -Dm644 "data/icons/hicolor/scalable/apps/$_app_id.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_app_id.svg"
+    install -Dm644 "data/icons/hicolor/symbolic/apps/$_app_id-symbolic.svg" \
+        "$pkgdir/usr/share/icons/hicolor/symbolic/apps/$_app_id-symbolic.svg"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
