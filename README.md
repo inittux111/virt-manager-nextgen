@@ -96,8 +96,9 @@ virt-manager has these, but virt-manager-nextgen doesn't:
 - More storage pool types: whole disks, ZFS, Ceph/RBD, Gluster, multipath and
   SCSI host adapters
 - TPM 1.2, and passing the host's own TPM to a machine
-- Looking inside a machine's disks for installed applications (libguestfs);
-  guest details come from the QEMU guest agent instead
+- Looking inside a shut-off machine's disks, e.g. for its installed
+  applications (libguestfs). Guest details come from the QEMU guest agent
+  instead, while the machine runs (see [Guest details](#guest-details))
 
 ## Use at your own risk
 
@@ -340,6 +341,35 @@ daemon and QEMU must be installed and running:
 To manage the system-wide machines (`QEMU/KVM · System`) without a password
 prompt each time, add yourself to the `libvirt` group and log in again:
 `sudo usermod -aG libvirt $USER`.
+
+### Guest details
+
+Install the QEMU guest agent inside each machine so the app can show its IP
+addresses, hostname, operating system and disk usage, and shut it down
+cleanly:
+
+- Fedora, RHEL-like: `sudo dnf install qemu-guest-agent`
+- Debian, Ubuntu: `sudo apt install qemu-guest-agent`
+- Windows: the guest agent in the virtio-win driver package
+
+The agent answers while the machine runs. Machines created with this app
+already have the channel it needs; for others, add it under Add Hardware →
+Channel.
+
+### Remote computers
+
+Main menu → Add Remote Computer… manages another computer's machines over
+SSH. The app logs in with your SSH key and never asks for a password, so set
+the key up once and accept the computer's key in a terminal:
+
+```sh
+ssh-copy-id user@computer
+ssh user@computer      # once, to accept the computer's key
+```
+
+The other computer needs libvirt running (and your user in its `libvirt`
+group for the System machines). Screens are reached through SSH, so nothing
+extra has to be opened in its firewall.
 
 ### 3D acceleration
 
