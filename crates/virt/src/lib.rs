@@ -19,6 +19,7 @@ mod firmware;
 mod guest;
 mod host;
 mod manage;
+mod memory;
 mod networks;
 mod new_vm;
 mod screenshot;
@@ -32,14 +33,17 @@ pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceCo
 pub use connection::{Connection, ConnectionKind, GuestDetails, HostInfo, PoolSummary};
 pub use console::ConsoleStream;
 pub use cpu::{CpuMode, SECURITY_FEATURES, Topology, mitigations_on, set_cpu_mode, set_mitigations, set_topology};
-pub use devices::{DeviceKind, DeviceRef, disk_prefix, list_devices, next_disk_target, replace_device};
+pub use devices::{DeviceKind, DeviceRef, disk_prefix, list_devices, next_disk_target, normalize_mac, replace_device};
 pub use domain::{DomainState, DomainSummary, PowerAction};
 pub use error::{Error, Result};
 pub use firmware::{FirmwareChoice, loader_is_secure, set_firmware};
 pub use guest::{GuestFilesystem, GuestInfo};
-pub use host::{DomainCaps, GuestArch, HostCaps, InstallImage, NetworkSummary};
+pub use host::{DomainCaps, GuestArch, HostCaps, InstallImage, NetworkSummary, VolumeOptions, volume_xml};
 pub use manage::{CloneDiskMode, unique_file_name, unique_name, validate_vm_name};
-pub use networks::{Ipv4Config, NetworkDetails, NetworkMode, NetworkSettings, apply_network_settings, suggest_subnet};
+pub use memory::{MemorySize, set_memory};
+pub use networks::{
+    Ipv4Config, NetworkDetails, NetworkMode, NetworkSettings, apply_network_settings, check_network_xml, suggest_subnet,
+};
 pub use new_vm::{
     BOOT_POOL, Created, GuestFamily, InstallSource, NetworkChoice, NetworkInstall, NewDisk, NewVm, build_domain_xml,
 };

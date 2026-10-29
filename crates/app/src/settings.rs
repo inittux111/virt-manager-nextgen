@@ -21,6 +21,27 @@ pub enum ConsoleScaling {
     FullscreenOnly,
 }
 
+/// Light or dark style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Appearance {
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    pub const ALL: [(Appearance, &'static str); 3] =
+        [(Appearance::System, "system"), (Appearance::Light, "light"), (Appearance::Dark, "dark")];
+
+    fn key(self) -> &'static str {
+        Self::ALL.iter().find(|(a, _)| *a == self).map_or("system", |(_, k)| k)
+    }
+
+    fn from_key(key: &str) -> Self {
+        Self::ALL.iter().find(|(_, k)| *k == key).map_or(Appearance::System, |(a, _)| *a)
+    }
+}
+
 /// The preferences as plain values.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
@@ -35,6 +56,7 @@ pub struct Prefs {
     pub stats_disk: bool,
     pub stats_network: bool,
 
+    pub appearance: Appearance,
     pub tray_icon: bool,
     /// Full-color tray icon instead of one matching the top bar.
     pub tray_icon_color: bool,
@@ -77,6 +99,7 @@ impl Default for Prefs {
             stats_memory: true,
             stats_disk: true,
             stats_network: true,
+            appearance: Appearance::System,
             tray_icon: false,
             tray_icon_color: false,
             xml_editing: false,
@@ -193,6 +216,7 @@ fn read(kf: &glib::KeyFile) -> Prefs {
         stats_memory: b("stats", "memory", d.stats_memory),
         stats_disk: b("stats", "disk", d.stats_disk),
         stats_network: b("stats", "network", d.stats_network),
+        appearance: Appearance::from_key(&s("general", "appearance", "system")),
         tray_icon: b("general", "tray-icon", d.tray_icon),
         tray_icon_color: b("general", "tray-icon-color", d.tray_icon_color),
         xml_editing: b("general", "xml-editing", d.xml_editing),
@@ -229,6 +253,7 @@ fn write(p: &Prefs) -> glib::KeyFile {
     kf.set_boolean("stats", "memory", p.stats_memory);
     kf.set_boolean("stats", "disk", p.stats_disk);
     kf.set_boolean("stats", "network", p.stats_network);
+    kf.set_string("general", "appearance", p.appearance.key());
     kf.set_boolean("general", "tray-icon", p.tray_icon);
     kf.set_boolean("general", "tray-icon-color", p.tray_icon_color);
     kf.set_boolean("general", "xml-editing", p.xml_editing);
@@ -267,6 +292,7 @@ mod tests {
             console_scaling: ConsoleScaling::FullscreenOnly,
             xml_editing: true,
             tray_icon_color: true,
+            appearance: Appearance::Dark,
             window_width: 900,
             window_maximized: true,
             last_view: "storage".into(),

@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_model: "host-passthrough".into(),
         install: InstallSource::NetworkBoot,
         disk: None,
+        existing_disk: None,
         network,
         graphics: "vnc".into(),
         virtio: true,

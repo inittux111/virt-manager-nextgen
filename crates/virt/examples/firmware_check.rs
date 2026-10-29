@@ -23,6 +23,7 @@ fn vm(firmware: FirmwareChoice) -> NewVm {
         cpu_model: "host-passthrough".into(),
         install: InstallSource::Manual,
         disk: None,
+        existing_disk: None,
         network: NetworkChoice::None,
         graphics: "vnc".into(),
         virtio: true,

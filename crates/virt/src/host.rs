@@ -5,7 +5,7 @@ use virt::storage_pool::StoragePool;
 use vmng_xml::Element;
 
 use crate::connection::{Connection, PoolSummary};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// One guest architecture the hypervisor can run.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -183,6 +183,28 @@ impl Connection {
         out
     }
 
+    /// The host's wired network cards, for a direct (macvtap) connection.
+    pub fn list_host_nics(&self) -> Vec<String> {
+        const ACTIVE: u32 = 2;
+        let mut out: Vec<String> = self
+            .raw()
+            .list_all_interfaces(ACTIVE)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|i| {
+                let xml = vmng_xml::parse(&i.get_xml_desc(0).ok()?).ok()?;
+                (xml.attr("type") == Some("ethernet")).then(|| xml.attr("name").unwrap_or_default().to_owned())
+            })
+            .filter(|n| {
+                !n.is_empty()
+                    && n != "lo"
+                    && !["vnet", "virbr", "macvtap", "veth", "tap", "docker", "podman"].iter().any(|p| n.starts_with(p))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
     /// Every storage pool with its size and target directory.
     pub fn list_pools(&self) -> Result<Vec<(PoolSummary, Option<String>)>> {
         let mut out = Vec::new();
@@ -232,15 +254,44 @@ impl Connection {
 
     /// Creates an empty disk image and returns its path.
     pub(crate) fn create_volume(&self, pool: &str, name: &str, capacity: u64, format: &str) -> Result<String> {
+        self.create_volume_with(pool, name, capacity, format, &VolumeOptions::default())
+    }
+
+    /// Creates a disk image with options (full allocation, a backing
+    /// image) and returns its path.
+    pub(crate) fn create_volume_with(
+        &self,
+        pool: &str,
+        name: &str,
+        capacity: u64,
+        format: &str,
+        options: &VolumeOptions,
+    ) -> Result<String> {
         let pool = StoragePool::lookup_by_name(self.raw(), pool)?;
-        let xml = Element::new("volume")
-            .with_child(Element::new("name").with_text(name))
-            .with_child(Element::new("capacity").with_attr("unit", "bytes").with_text(capacity.to_string()))
-            // Thin provisioning: qcow2 grows as the guest writes.
-            .with_child(Element::new("allocation").with_attr("unit", "bytes").with_text("0"))
-            .with_child(Element::new("target").with_child(Element::new("format").with_attr("type", format)));
-        let vol = virt::storage_vol::StorageVol::create_xml(&pool, &xml.to_xml(), 0)?;
+        let backing = match &options.backing {
+            Some(path) => {
+                if format != "qcow2" {
+                    return Err(Error::Invalid("Only qcow2 images can be based on another image.".into()));
+                }
+                let format = self.image_format(path).unwrap_or_else(|| "raw".into());
+                Some((path.as_str(), format))
+            }
+            None => None,
+        };
+        let xml = volume_xml(name, capacity, format, options.allocate, backing.as_ref().map(|(p, f)| (*p, f.as_str())));
+        // qcow2 only reserves its space when asked to preallocate.
+        const PREALLOC_METADATA: u32 = 1;
+        let flags = if options.allocate && format == "qcow2" { PREALLOC_METADATA } else { 0 };
+        let vol = virt::storage_vol::StorageVol::create_xml(&pool, &xml.to_xml(), flags)?;
         Ok(vol.get_path()?)
+    }
+
+    /// The image format (`qcow2`, `raw`, …) libvirt reports for a file in
+    /// one of its pools.
+    pub fn image_format(&self, path: &str) -> Option<String> {
+        let vol = virt::storage_vol::StorageVol::lookup_by_path(self.raw(), path).ok()?;
+        let xml = vmng_xml::parse(&vol.get_xml_desc(0).ok()?).ok()?;
+        xml.find_attr("target/format", "type").map(str::to_owned)
     }
 
     /// Creates an empty disk image named after `base` (made unique in the
@@ -265,9 +316,50 @@ impl Connection {
     }
 }
 
+/// How a new disk image is made.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VolumeOptions {
+    /// Reserve the whole size now instead of growing as the guest writes.
+    pub allocate: bool,
+    /// An image this one starts from (copy-on-write): only the changes are
+    /// stored in the new image.
+    pub backing: Option<String>,
+}
+
+/// The XML of a new volume. `backing` is the base image and its format.
+pub fn volume_xml(name: &str, capacity: u64, format: &str, allocate: bool, backing: Option<(&str, &str)>) -> Element {
+    // Thin provisioning unless asked: the image grows as the guest writes.
+    let allocation = if allocate { capacity } else { 0 };
+    let mut xml = Element::new("volume")
+        .with_child(Element::new("name").with_text(name))
+        .with_child(Element::new("capacity").with_attr("unit", "bytes").with_text(capacity.to_string()))
+        .with_child(Element::new("allocation").with_attr("unit", "bytes").with_text(allocation.to_string()))
+        .with_child(Element::new("target").with_child(Element::new("format").with_attr("type", format)));
+    if let Some((path, format)) = backing {
+        xml.push(
+            Element::new("backingStore")
+                .with_child(Element::new("path").with_text(path))
+                .with_child(Element::new("format").with_attr("type", format)),
+        );
+    }
+    xml
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_options() {
+        let thin = volume_xml("a.qcow2", 1 << 30, "qcow2", false, None);
+        assert_eq!(thin.find_text("allocation").as_deref(), Some("0"));
+        assert!(thin.child("backingStore").is_none());
+        let full = volume_xml("a.img", 1 << 30, "raw", true, None);
+        assert_eq!(full.find_text("allocation").as_deref(), Some("1073741824"));
+        let child = volume_xml("b.qcow2", 1 << 30, "qcow2", false, Some(("/v/base.qcow2", "qcow2")));
+        assert_eq!(child.find_text("backingStore/path").as_deref(), Some("/v/base.qcow2"));
+        assert_eq!(child.find_attr("backingStore/format", "type"), Some("qcow2"));
+    }
 
     #[test]
     fn parses_capabilities() {

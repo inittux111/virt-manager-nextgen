@@ -69,6 +69,8 @@ pub struct VolumeInfo {
     pub capacity: u64,
     pub allocation: u64,
     pub format: Option<String>,
+    /// The image this one is based on (backing file), if any.
+    pub backing: Option<String>,
 }
 
 /// What a person fills in to create a pool.
@@ -188,17 +190,16 @@ impl Connection {
         let mut out = Vec::new();
         for vol in pool.list_all_volumes(0)? {
             let Ok(info) = vol.get_info() else { continue };
-            let format = vol
-                .get_xml_desc(0)
-                .ok()
-                .and_then(|x| vmng_xml::parse(&x).ok())
-                .and_then(|x| x.find_attr("target/format", "type").map(str::to_owned));
+            let xml = vol.get_xml_desc(0).ok().and_then(|x| vmng_xml::parse(&x).ok());
+            let format = xml.as_ref().and_then(|x| x.find_attr("target/format", "type").map(str::to_owned));
+            let backing = xml.as_ref().and_then(|x| x.find_text("backingStore/path")).filter(|p| !p.is_empty());
             out.push(VolumeInfo {
                 name: vol.get_name()?,
                 path: vol.get_path()?,
                 capacity: info.capacity,
                 allocation: info.allocation,
                 format,
+                backing,
             });
         }
         out.sort_by_key(|v| v.name.to_lowercase());
@@ -248,15 +249,22 @@ impl Connection {
         Ok(())
     }
 
-    /// Creates an empty volume with exactly this name.
-    pub fn create_named_volume(&self, pool: &str, name: &str, size: u64, format: &str) -> Result<String> {
+    /// Creates a volume with exactly this name.
+    pub fn create_named_volume(
+        &self,
+        pool: &str,
+        name: &str,
+        size: u64,
+        format: &str,
+        options: &crate::host::VolumeOptions,
+    ) -> Result<String> {
         if name.trim().is_empty() || name.contains('/') {
             return Err(Error::Invalid("The name can't be empty or contain slashes.".into()));
         }
         if !self.volume_name_free(pool, name) {
             return Err(Error::Invalid(format!("{name} already exists in this pool.")));
         }
-        self.create_volume(pool, name, size, format)
+        self.create_volume_with(pool, name, size, format, options)
     }
 
     /// Deletes a volume (its file or logical volume is removed).

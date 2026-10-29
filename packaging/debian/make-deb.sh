@@ -43,7 +43,7 @@ Version: $version
 Architecture: $arch
 Maintainer: ${MAINTAINER:-virt-manager-nextgen builder <noreply@localhost>}
 Depends: $libs, libgtk-4-1 (>= $gtk_min), libadwaita-1-0 (>= $adw_min), osinfo-db, librsvg2-common
-Recommends: libvirt-daemon-system, qemu-system-x86 | qemu-system, qemu-utils, qemu-system-modules-spice
+Recommends: libvirt-daemon-system, qemu-system-x86 | qemu-system, qemu-utils, qemu-system-modules-spice, virtiofsd
 Suggests: swtpm, swtpm-tools
 Section: admin
 Priority: optional

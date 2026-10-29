@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_model: "host-passthrough".into(),
         install: InstallSource::Media(iso.clone()),
         disk: None,
+        existing_disk: None,
         network: NetworkChoice::None,
         graphics: "vnc".into(),
         virtio: true,

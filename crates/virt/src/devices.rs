@@ -150,7 +150,43 @@ pub fn disk_prefix(bus: &str) -> &'static str {
     }
 }
 
+/// Checks a MAC address typed by a person and returns it in lower case.
+/// Group (multicast) addresses can't belong to a network card.
+pub fn normalize_mac(mac: &str) -> std::result::Result<String, &'static str> {
+    let mac = mac.trim().to_ascii_lowercase().replace('-', ":");
+    let parts: Vec<&str> = mac.split(':').collect();
+    if parts.len() != 6 || parts.iter().any(|p| p.len() != 2 || !p.chars().all(|c| c.is_ascii_hexdigit())) {
+        return Err("Enter six pairs of hexadecimal digits, e.g. 52:54:00:12:34:56.");
+    }
+    let first = u8::from_str_radix(parts[0], 16).unwrap_or(0);
+    if first & 1 == 1 {
+        return Err("This is a group (multicast) address; the first pair must be even.");
+    }
+    if parts.iter().all(|p| *p == "00") {
+        return Err("The address can't be all zeros.");
+    }
+    Ok(mac)
+}
+
 impl Connection {
+    /// Shows a new title and description on a running machine right away
+    /// (the saved configuration is changed separately).
+    pub fn set_live_title(&self, uuid: &str, title: Option<&str>, description: Option<&str>) -> Result<()> {
+        const DESCRIPTION: i32 = 0;
+        const TITLE: i32 = 1;
+        let dom = self.domain(uuid)?;
+        dom.set_metadata(TITLE, title.filter(|t| !t.is_empty()), None, None, AFFECT_LIVE)?;
+        dom.set_metadata(DESCRIPTION, description.filter(|t| !t.is_empty()), None, None, AFFECT_LIVE)?;
+        Ok(())
+    }
+
+    /// Changes a running machine's memory now (through the guest's balloon
+    /// driver), up to its maximum. `bytes` is the new size.
+    pub fn set_live_memory(&self, uuid: &str, bytes: u64) -> Result<()> {
+        self.domain(uuid)?.set_memory_flags(bytes / 1024, AFFECT_LIVE)?;
+        Ok(())
+    }
+
     /// The persistent configuration of a domain, including secrets
     /// (graphics passwords), for editing.
     pub fn domain_config_xml(&self, uuid: &str) -> Result<Element> {
@@ -284,5 +320,13 @@ mod tests {
         assert_eq!(next_disk_target(&d, "vd"), "vdb");
         assert_eq!(next_disk_target(&d, "sd"), "sdb");
         assert_eq!(disk_prefix("virtio"), "vd");
+    }
+
+    #[test]
+    fn mac_addresses() {
+        assert_eq!(normalize_mac(" 52-54-00-AB-cd-01 ").unwrap(), "52:54:00:ab:cd:01");
+        for bad in ["52:54:00:ab:cd", "01:00:5e:00:00:01", "00:00:00:00:00:00", "52:54:00:ab:cd:zz", ""] {
+            assert!(normalize_mac(bad).is_err(), "{bad}");
+        }
     }
 }

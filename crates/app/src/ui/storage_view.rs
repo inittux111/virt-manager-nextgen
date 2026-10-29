@@ -232,6 +232,13 @@ impl StorageView {
                 this.new_volume_dialog(b);
             }
         });
+        // Debug builds: VMNG_DEV_NEW_VOLUME=1 opens New Volume once the
+        // volumes are shown (screenshots).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("VMNG_DEV_NEW_VOLUME").is_some() {
+            let b = this.new_volume.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(4), move || b.emit_clicked());
+        }
         let weak = Rc::downgrade(&this);
         this.autostart.connect_active_notify(move |r| {
             let Some(this) = weak.upgrade() else { return };
@@ -272,7 +279,12 @@ impl StorageView {
         }
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let result = conn.call(|c| c.pool_details()).await;
+            // Not the network installers' temporary pool.
+            let result = conn
+                .call(|c| {
+                    Ok(c.pool_details()?.into_iter().filter(|p| p.name != vmng_virt::BOOT_POOL).collect::<Vec<_>>())
+                })
+                .await;
             let Some(this) = weak.upgrade() else { return };
             match result {
                 Ok(pools) => {
@@ -410,6 +422,9 @@ impl StorageView {
             if let Some(f) = &v.format {
                 sub.push(f.clone());
             }
+            if let Some(b) = &v.backing {
+                sub.push(format!("based on {}", b.rsplit('/').next().unwrap_or(b)));
+            }
             let row =
                 adw::ActionRow::builder().title(glib::markup_escape_text(&v.name)).subtitle(sub.join(" · ")).build();
             let menu = gio::Menu::new();
@@ -487,7 +502,18 @@ impl StorageView {
     fn ask_delete_volume(self: &Rc<Self>, name: String) {
         let Some(pool) = self.state.borrow().selected.clone() else { return };
         let vol = self.state.borrow().volumes.iter().find(|v| v.name == name).cloned();
-        let users = vol.as_ref().map(|v| users_of(&v.path, &self.state.borrow().domains)).unwrap_or_default();
+        let mut users = vol.as_ref().map(|v| users_of(&v.path, &self.state.borrow().domains)).unwrap_or_default();
+        // Images based on this one stop working without it, too.
+        if let Some(v) = &vol {
+            users.extend(
+                self.state
+                    .borrow()
+                    .volumes
+                    .iter()
+                    .filter(|o| o.backing.as_deref() == Some(v.path.as_str()))
+                    .map(|o| o.name.clone()),
+            );
+        }
         let body = if users.is_empty() {
             "The file is deleted from the disk. This can't be undone.".to_owned()
         } else {
@@ -544,12 +570,67 @@ impl StorageView {
         size.set_value(20.0);
         let fmt = adw::ComboRow::builder()
             .title("Format")
-            .model(&gtk::StringList::new(&["qcow2 (grows as needed)", "raw (fastest, full size)"]))
+            .model(&gtk::StringList::new(&["qcow2 (grows)", "raw (fastest)"]))
+            .build();
+        let allocate = adw::SwitchRow::builder()
+            .title("Allocate the whole size now")
+            .subtitle("Reserve the space up front")
+            .build();
+        // Disk images in this pool another qcow2 image can start from.
+        let bases: Vec<vmng_virt::VolumeInfo> = self
+            .state
+            .borrow()
+            .volumes
+            .iter()
+            .filter(|v| matches!(v.format.as_deref(), Some("qcow2" | "raw")))
+            .cloned()
+            .collect();
+        let mut base_labels = vec!["Nothing".to_owned()];
+        base_labels.extend(bases.iter().map(|v| v.name.clone()));
+        let base_refs: Vec<&str> = base_labels.iter().map(String::as_str).collect();
+        let base = adw::ComboRow::builder()
+            .title("Based on")
+            .subtitle("Store only the changes to another image")
+            .model(&gtk::StringList::new(&base_refs))
             .build();
         group.add(&name);
         group.add(&size);
         group.add(&fmt);
+        group.add(&allocate);
+        group.add(&base);
         form.add(&group);
+        let note = gtk::Label::builder()
+            .label("Don't change or delete the base image while images based on it exist.")
+            .xalign(0.0)
+            .wrap(true)
+            .visible(false)
+            .css_classes(["caption", "warning"])
+            .build();
+        form.add(&note);
+        {
+            let (fmt, allocate, size, note, bases) =
+                (fmt.clone(), allocate.clone(), size.clone(), note.clone(), bases.clone());
+            base.connect_selected_notify(move |b| {
+                let chosen = (b.selected() as usize).checked_sub(1).and_then(|i| bases.get(i));
+                // Only qcow2 can point at a base image, and it starts small.
+                if chosen.is_some() {
+                    fmt.set_selected(0);
+                    allocate.set_active(false);
+                }
+                fmt.set_sensitive(chosen.is_none());
+                allocate.set_sensitive(chosen.is_none());
+                note.set_visible(chosen.is_some());
+                let adj = size.adjustment();
+                if let Some(v) = chosen {
+                    let gib = v.capacity.div_ceil(GIB) as f64;
+                    adj.set_upper(adj.upper().max(gib));
+                    adj.set_lower(gib);
+                    size.set_value(gib.max(size.value()));
+                } else {
+                    adj.set_lower(1.0);
+                }
+            });
+        }
         let n2 = name.clone();
         fmt.connect_selected_notify(move |f| {
             // Keep the extension in step with the format.
@@ -566,12 +647,16 @@ impl StorageView {
                 return form.set_error(Some("A volume with this name already exists."));
             }
             let format = if fmt.selected() == 0 { "qcow2" } else { "raw" };
-            let bytes = size.value() as u64 * GIB;
+            let backing = (base.selected() as usize).checked_sub(1).and_then(|i| bases.get(i));
+            // A based-on image is at least as large as its base.
+            let bytes = (size.value() as u64 * GIB).max(backing.map_or(0, |v| v.capacity));
+            let options =
+                vmng_virt::VolumeOptions { allocate: allocate.is_active(), backing: backing.map(|v| v.path.clone()) };
             let p = pool_name.clone();
             let n2 = n.clone();
             form.close();
             this.run(
-                move |c| c.create_named_volume(&p, &n2, bytes, format).map(drop),
+                move |c| c.create_named_volume(&p, &n2, bytes, format, &options).map(drop),
                 "Couldn't create the volume",
                 Some(format!("Created {n}")),
             );

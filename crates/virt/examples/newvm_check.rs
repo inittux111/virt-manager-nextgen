@@ -38,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_model: "host-passthrough".into(),
         install: InstallSource::Media(iso),
         disk: Some(NewDisk { pool, size: 1 << 30, format: "qcow2".into() }),
+        existing_disk: None,
         network: NetworkChoice::None,
         graphics: "spice".into(),
         virtio: true,

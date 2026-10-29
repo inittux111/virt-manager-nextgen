@@ -54,6 +54,25 @@ struct HostData {
     bridges: Vec<String>,
 }
 
+/// What the Storage step does for the machine's disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiskMode {
+    Create,
+    Existing,
+    None,
+}
+
+const DISK_MODES: [(DiskMode, &str); 3] =
+    [(DiskMode::Create, "New disk"), (DiskMode::Existing, "Existing image"), (DiskMode::None, "None")];
+
+/// What a file chooser picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Browse {
+    Media,
+    Import,
+    ExistingDisk,
+}
+
 #[derive(Default)]
 struct State {
     step: usize,
@@ -61,6 +80,8 @@ struct State {
     /// (label, path) of the installer choices in the combo row.
     media: Vec<(String, String)>,
     import_path: Option<String>,
+    /// An existing image used as the new machine's disk (Storage step).
+    existing_path: Option<String>,
     /// The installer of the network install tree, once read.
     tree: Option<TreeInstaller>,
     tree_error: Option<String>,
@@ -116,9 +137,10 @@ struct Wizard {
     tpm: adw::SwitchRow,
     // Storage.
     disk_group: adw::PreferencesGroup,
-    create_disk: adw::SwitchRow,
+    disk_mode: adw::ComboRow,
     disk_size: adw::SpinRow,
     pool_row: adw::ComboRow,
+    existing_row: adw::ActionRow,
     import_note: adw::PreferencesGroup,
     // Review.
     name: adw::EntryRow,
@@ -351,13 +373,22 @@ impl Wizard {
         // Storage page.
         let (storage_page, storage) = page("Where should the machine's disk live?");
         let disk_group = adw::PreferencesGroup::new();
-        let create_disk = adw::SwitchRow::builder().title("Create a disk").active(true).build();
+        let disk_mode =
+            adw::ComboRow::builder().title("Disk").model(&gtk::StringList::new(&DISK_MODES.map(|(_, l)| l))).build();
         let disk_size = adw::SpinRow::with_range(1.0, 65536.0, 1.0);
         disk_size.set_title("Size (GiB)");
-        let pool_row = adw::ComboRow::builder().title("Storage pool").build();
-        disk_group.add(&create_disk);
+        let pool_row = adw::ComboRow::builder()
+            .title("Location")
+            .subtitle("The storage pool for the new disk; add a pool under Storage to use another folder or drive")
+            .build();
+        let existing_row =
+            adw::ActionRow::builder().title("Disk image").subtitle("No file chosen").visible(false).build();
+        let browse_existing = gtk::Button::builder().label("Browse…").valign(gtk::Align::Center).build();
+        existing_row.add_suffix(&browse_existing);
+        disk_group.add(&disk_mode);
         disk_group.add(&disk_size);
         disk_group.add(&pool_row);
+        disk_group.add(&existing_row);
         storage.append(&disk_group);
         let import_note = adw::PreferencesGroup::builder()
             .title("Imported disk")
@@ -476,7 +507,8 @@ impl Wizard {
             secure_boot,
             tpm,
             disk_group,
-            create_disk,
+            disk_mode,
+            existing_row,
             disk_size,
             pool_row,
             import_note,
@@ -490,6 +522,12 @@ impl Wizard {
             on_created,
         });
         w.wire(&cancel, &browse_media, &browse_disk);
+        let weak = Rc::downgrade(&w);
+        browse_existing.connect_clicked(move |_| {
+            if let Some(w) = weak.upgrade() {
+                w.browse(Browse::ExistingDisk);
+            }
+        });
         w
     }
 
@@ -555,13 +593,13 @@ impl Wizard {
         let weak = Rc::downgrade(self);
         browse_media.connect_clicked(move |_| {
             if let Some(w) = weak.upgrade() {
-                w.browse(true);
+                w.browse(Browse::Media);
             }
         });
         let weak = Rc::downgrade(self);
         browse_disk.connect_clicked(move |_| {
             if let Some(w) = weak.upgrade() {
-                w.browse(false);
+                w.browse(Browse::Import);
             }
         });
         let weak = Rc::downgrade(self);
@@ -610,10 +648,13 @@ impl Wizard {
             }
         });
         let weak = Rc::downgrade(self);
-        self.create_disk.connect_active_notify(move |r| {
+        self.disk_mode.connect_selected_notify(move |_| {
             if let Some(w) = weak.upgrade() {
-                w.disk_size.set_sensitive(r.is_active());
-                w.pool_row.set_sensitive(r.is_active());
+                let mode = w.disk_mode();
+                w.disk_size.set_visible(mode == DiskMode::Create);
+                w.pool_row.set_visible(mode == DiskMode::Create);
+                w.existing_row.set_visible(mode == DiskMode::Existing);
+                w.update_buttons();
             }
         });
         let weak = Rc::downgrade(self);
@@ -773,6 +814,11 @@ impl Wizard {
             } else if std::env::var_os("VMNG_DEV_WIZARD_PXE").is_some() {
                 pick(Method::Manual);
                 self.pxe.set_active(true);
+            }
+            // `VMNG_DEV_WIZARD_EXISTING=<image>` uses an existing disk.
+            if let Ok(path) = std::env::var("VMNG_DEV_WIZARD_EXISTING") {
+                self.disk_mode.set_selected(1);
+                self.set_existing_disk(path);
             }
         }
         #[cfg(debug_assertions)]
@@ -1100,7 +1146,12 @@ impl Wizard {
         });
     }
 
-    fn browse(self: &Rc<Self>, media: bool) {
+    fn disk_mode(&self) -> DiskMode {
+        DISK_MODES.get(self.disk_mode.selected() as usize).map_or(DiskMode::Create, |(m, _)| *m)
+    }
+
+    fn browse(self: &Rc<Self>, target: Browse) {
+        let media = target == Browse::Media;
         let filter = gtk::FileFilter::new();
         if media {
             filter.set_name(Some("Disc images"));
@@ -1144,6 +1195,8 @@ impl Wizard {
                 w.media_row.set_selected(index as u32);
                 w.updating.set(false);
                 w.detect();
+            } else if target == Browse::ExistingDisk {
+                w.set_existing_disk(path);
             } else {
                 w.import_row.set_subtitle(&glib::markup_escape_text(&path));
                 w.state.borrow_mut().import_path = Some(path);
@@ -1151,6 +1204,12 @@ impl Wizard {
                 w.update_buttons();
             }
         });
+    }
+
+    fn set_existing_disk(&self, path: String) {
+        self.existing_row.set_subtitle(&glib::markup_escape_text(&path));
+        self.state.borrow_mut().existing_path = Some(path);
+        self.update_buttons();
     }
 
     /// Applies the chosen OS's recommendations to values the person has
@@ -1297,7 +1356,11 @@ impl Wizard {
                 Some(Method::Manual) => true,
                 None => false,
             },
-            2 => !self.create_disk.is_active() || !st.pools.is_empty(),
+            2 => match self.disk_mode() {
+                DiskMode::Create => !st.pools.is_empty(),
+                DiskMode::Existing => st.existing_path.is_some(),
+                DiskMode::None => true,
+            },
             _ => true,
         }
     }
@@ -1376,7 +1439,8 @@ impl Wizard {
         add("Virtual CPUs", format!("{}", self.cpus.value() as u32));
         let disk = match st.method {
             Some(Method::Import) => st.import_path.clone().unwrap_or_default(),
-            _ if self.create_disk.is_active() => {
+            _ if self.disk_mode() == DiskMode::Existing => st.existing_path.clone().unwrap_or_default(),
+            _ if self.disk_mode() == DiskMode::Create => {
                 let pool = st.pools.get(self.pool_row.selected() as usize).map_or("", |p| p.name.as_str());
                 format!(
                     "{} {} in {pool}",
@@ -1432,7 +1496,7 @@ impl Wizard {
             _ if self.pxe.is_active() => InstallSource::NetworkBoot,
             _ => InstallSource::Manual,
         };
-        let disk = (st.method != Some(Method::Import) && self.create_disk.is_active())
+        let disk = (st.method != Some(Method::Import) && self.disk_mode() == DiskMode::Create)
             .then(|| st.pools.get(self.pool_row.selected() as usize))
             .flatten()
             .map(|p| NewDisk {
@@ -1454,6 +1518,9 @@ impl Wizard {
             cpu_model: self.ctx.prefs.new_vm_cpu_model.clone(),
             install,
             disk,
+            existing_disk: (st.method != Some(Method::Import) && self.disk_mode() == DiskMode::Existing)
+                .then(|| st.existing_path.clone())
+                .flatten(),
             network: st
                 .networks
                 .get(self.network_row.selected() as usize)

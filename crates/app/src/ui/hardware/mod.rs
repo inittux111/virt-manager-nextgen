@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use vmng_virt::{DeviceKind, DomainSummary, HostInfo, list_devices};
+use vmng_virt::{DeviceKind, DomainSummary, HostInfo, MemorySize, list_devices};
 use vmng_xml::Element;
 
 use self::editors::{Bind, Choices, Live, Target};
@@ -22,6 +22,7 @@ use crate::settings::Settings;
 /// An entry of the hardware list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Item {
+    Overview,
     CpuMemory,
     Boot,
     Device(usize),
@@ -359,6 +360,7 @@ impl HardwareView {
                         loaders: caps.loaders,
                         cpu_models: caps.cpu_models,
                         cpu_security: caps.cpu_security_features,
+                        host_nics: c.list_host_nics(),
                     };
                     Ok((xml, choices))
                 })
@@ -386,7 +388,7 @@ impl HardwareView {
 
     fn rebuild_list(self: &Rc<Self>) {
         let work = self.work.borrow().clone();
-        let mut items = vec![Item::CpuMemory, Item::Boot];
+        let mut items = vec![Item::Overview, Item::CpuMemory, Item::Boot];
         items.extend(list_devices(&work).iter().filter(|d| labels::is_listed(d)).map(|d| Item::Device(d.index)));
         items.push(Item::Xml);
 
@@ -395,6 +397,7 @@ impl HardwareView {
         let mut rows = Vec::new();
         for item in items {
             let icon = gtk::Image::from_icon_name(match item {
+                Item::Overview => "dialog-information-symbolic",
                 Item::CpuMemory => "applications-system-symbolic",
                 Item::Boot => "system-run-symbolic",
                 Item::Xml => "text-x-generic-symbolic",
@@ -485,6 +488,10 @@ impl HardwareView {
         let st = self.state.borrow();
         for r in &st.rows {
             let (title, sub) = match r.item {
+                Item::Overview => {
+                    let c = vmng_virt::DomainConfig::from_xml(&work);
+                    ("Overview".to_owned(), c.title.unwrap_or(c.name))
+                }
                 Item::CpuMemory => {
                     let c = vmng_virt::DomainConfig::from_xml(&work);
                     ("Processor & memory".to_owned(), format!("{} vCPU · {}", c.vcpus, crate::format::bytes(c.memory)))
@@ -545,6 +552,11 @@ impl HardwareView {
         self.remove.set_visible(false);
         self.running_note.set_visible(active && item != Item::Xml);
         let (title, subtitle, body) = match item {
+            Item::Overview => (
+                "Overview".to_owned(),
+                "A title and notes to recognise this machine.".to_owned(),
+                editors::overview(&self.bind(Target::Domain)),
+            ),
             Item::CpuMemory => (
                 "Processor & memory".to_owned(),
                 "How much of the host this machine may use.".to_owned(),
@@ -613,19 +625,57 @@ impl HardwareView {
     fn save(self: &Rc<Self>) {
         let Some((conn, uuid)) = self.conn_uuid() else { return };
         let xml = self.work.borrow().clone();
+        let base = self.state.borrow().base.clone();
         let active = self.state.borrow().active;
+        // What a running machine can take right away: its title and
+        // description, and a new memory size up to its maximum.
+        let text = |e: &Element, n: &str| e.find_text(n).filter(|t| !t.is_empty());
+        let live_title = base
+            .as_ref()
+            .filter(|b| {
+                active
+                    && (text(b, "title") != text(&xml, "title") || text(b, "description") != text(&xml, "description"))
+            })
+            .map(|_| (text(&xml, "title"), text(&xml, "description")));
+        let only_memory_and_text = base.as_ref().is_some_and(|b| {
+            let strip = |e: &Element| {
+                let mut e = e.clone();
+                e.remove_children(|c| matches!(c.name.as_str(), "title" | "description" | "currentMemory"));
+                e
+            };
+            strip(b) == strip(&xml)
+        });
+        let live_memory = base
+            .as_ref()
+            .map(MemorySize::of)
+            .filter(|b| active && b.current != MemorySize::of(&xml).current)
+            .map(|_| MemorySize::of(&xml).current);
         self.apply.set_sensitive(false);
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let result = conn.call(move |c| c.save_domain_config(&uuid, &xml)).await;
+            let result = conn
+                .call(move |c| {
+                    c.save_domain_config(&uuid, &xml)?;
+                    let mut live = true;
+                    if let Some((title, description)) = live_title {
+                        live &= c.set_live_title(&uuid, title.as_deref(), description.as_deref()).is_ok();
+                    }
+                    if let Some(bytes) = live_memory {
+                        live &= c.set_live_memory(&uuid, bytes).is_ok();
+                    }
+                    Ok(live)
+                })
+                .await;
             let Some(this) = weak.upgrade() else { return };
             this.apply.set_sensitive(true);
             match result {
-                Ok(()) => {
-                    this.feedback.toast(if active {
-                        "Saved. Restart the machine to use the new settings."
-                    } else {
+                Ok(live) => {
+                    this.feedback.toast(if !active {
                         "Saved the changes"
+                    } else if live && only_memory_and_text {
+                        "Saved and applied to the running machine"
+                    } else {
+                        "Saved. Restart the machine to use the new settings."
                     });
                     this.state.borrow_mut().base = None;
                     this.load();

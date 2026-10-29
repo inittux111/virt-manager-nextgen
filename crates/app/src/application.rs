@@ -7,7 +7,7 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::config;
-use crate::settings::Settings;
+use crate::settings::{Appearance, Settings};
 use crate::ui::MainWindow;
 
 /// Runs the application and returns its exit code.
@@ -24,6 +24,8 @@ pub fn run() -> glib::ExitCode {
 
     let s = settings.clone();
     app.connect_startup(move |app| {
+        apply_appearance(s.get().appearance);
+        s.connect_changed(|p| apply_appearance(p.appearance));
         load_css();
         load_icons();
         setup_actions(app, &s);
@@ -75,6 +77,15 @@ fn load_css() {
     let manager = adw::StyleManager::default();
     apply(&manager);
     manager.connect_dark_notify(apply);
+}
+
+/// Light, dark or the system's choice.
+fn apply_appearance(appearance: Appearance) {
+    adw::StyleManager::default().set_color_scheme(match appearance {
+        Appearance::System => adw::ColorScheme::Default,
+        Appearance::Light => adw::ColorScheme::ForceLight,
+        Appearance::Dark => adw::ColorScheme::ForceDark,
+    });
 }
 
 fn load_icons() {

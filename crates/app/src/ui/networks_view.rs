@@ -11,6 +11,7 @@ use vmng_virt::{DomainSummary, Ipv4Config, NetworkDetails, NetworkMode, NetworkS
 use super::feedback::Feedback;
 use super::widgets::{FormDialog, ListDetail, StatusLabel, Tone, boxed_list, scrolled_page, section_heading};
 use crate::backend::Conn;
+use crate::settings::Settings;
 
 fn settings_of(d: &NetworkDetails) -> NetworkSettings {
     NetworkSettings {
@@ -40,6 +41,9 @@ struct State {
     selected: Option<String>,
     base: Option<NetworkSettings>,
     work: Option<NetworkSettings>,
+    /// The saved XML as shown, and as edited.
+    xml_base: String,
+    xml_work: String,
     /// Guards against feedback loops while controls are filled in.
     filling: bool,
 }
@@ -62,10 +66,17 @@ pub struct NetworksView {
     ipv6: adw::EntryRow,
     dns: adw::EntryRow,
     error: gtk::Label,
+    /// The settings groups, locked while the XML is being edited.
+    form: Vec<gtk::Widget>,
+    xml_buffer: gtk::TextBuffer,
+    xml_view: gtk::TextView,
+    xml_note: gtk::Label,
+    xml_error: gtk::Label,
     apply_bar: gtk::Revealer,
     apply: gtk::Button,
     state: RefCell<State>,
     feedback: Feedback,
+    settings: Settings,
 }
 
 impl std::fmt::Debug for NetworksView {
@@ -75,7 +86,7 @@ impl std::fmt::Debug for NetworksView {
 }
 
 impl NetworksView {
-    pub fn new(feedback: Feedback) -> Rc<Self> {
+    pub fn new(feedback: Feedback, settings: Settings) -> Rc<Self> {
         let list = gtk::ListBox::builder().css_classes(["boxed-list", "hardware-list"]).build();
         list.update_property(&[gtk::accessible::Property::Label("Virtual networks")]);
         let left = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(12).width_request(280).build();
@@ -142,9 +153,10 @@ impl NetworksView {
         let ipv4 = adw::EntryRow::builder().title("Network (address/size)").build();
         let dhcp = adw::SwitchRow::builder().title("Hand out addresses (DHCP)").build();
         let range_row = adw::ActionRow::builder().title("Address range").build();
+        // Breaks only between words, so "Off" never splits.
         let range = gtk::Label::builder()
             .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .wrap_mode(gtk::pango::WrapMode::Word)
             .justify(gtk::Justification::Right)
             .xalign(1.0)
             .css_classes(["dim-label"])
@@ -161,6 +173,37 @@ impl NetworksView {
         v6.add(&dns);
 
         let error = gtk::Label::builder().xalign(0.0).wrap(true).visible(false).css_classes(["error"]).build();
+
+        // The whole configuration as XML, like a machine's XML page.
+        let xml_buffer = gtk::TextBuffer::new(None);
+        let xml_view = gtk::TextView::builder()
+            .buffer(&xml_buffer)
+            .monospace(true)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .top_margin(12)
+            .bottom_margin(12)
+            .left_margin(12)
+            .right_margin(12)
+            .css_classes(["xml-view", "card"])
+            .build();
+        xml_view.update_property(&[gtk::accessible::Property::Label("Network XML")]);
+        let xml_note = gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build();
+        let xml_error =
+            gtk::Label::builder().xalign(0.0).wrap(true).visible(false).css_classes(["error", "caption"]).build();
+        let xml_inner = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).margin_top(8).build();
+        xml_inner.append(&xml_note);
+        xml_inner.append(&xml_view);
+        xml_inner.append(&xml_error);
+        let xml = gtk::Expander::builder().label("XML").child(&xml_inner).build();
+        // Debug builds: VMNG_DEV_NET_XML=1 opens the XML (screenshots).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("VMNG_DEV_NET_XML").is_some() {
+            xml.set_expanded(true);
+            let x = xml.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                x.grab_focus();
+            });
+        }
 
         let delete_row = adw::ActionRow::builder()
             .title("Delete this network")
@@ -183,6 +226,7 @@ impl NetworksView {
             ipv4_group.upcast_ref(),
             v6.upcast_ref(),
             error.upcast_ref(),
+            xml.upcast_ref(),
             danger.upcast_ref(),
         ] {
             right.append(w);
@@ -239,6 +283,7 @@ impl NetworksView {
         let root = gtk::Overlay::builder().child(&stack).build();
         root.add_overlay(&apply_bar);
 
+        let form = vec![connection.upcast(), general.clone().upcast(), ipv4_group.clone().upcast(), v6.upcast()];
         let this = Rc::new(Self {
             root,
             list,
@@ -257,10 +302,16 @@ impl NetworksView {
             ipv6,
             dns,
             error,
+            form,
+            xml_buffer,
+            xml_view,
+            xml_note,
+            xml_error,
             apply_bar,
             apply,
             state: RefCell::default(),
             feedback,
+            settings,
         });
         this.wire(&revert, &delete);
         this
@@ -325,6 +376,23 @@ impl NetworksView {
                 let v = e.text().trim().to_owned();
                 this.edit(|s| s.dns_domain = Some(v).filter(|v| !v.is_empty()));
             }
+        });
+        let weak = Rc::downgrade(self);
+        self.xml_buffer.connect_changed(move |buf| {
+            let Some(this) = weak.upgrade() else { return };
+            if this.state.borrow().filling {
+                return;
+            }
+            let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+            match vmng_xml::parse(&text) {
+                Ok(_) => this.xml_error.set_visible(false),
+                Err(e) => {
+                    this.xml_error.set_label(&e.to_string());
+                    this.xml_error.set_visible(true);
+                }
+            }
+            this.state.borrow_mut().xml_work = text;
+            this.update_bar();
         });
         let weak = Rc::downgrade(self);
         self.autostart.connect_active_notify(move |r| {
@@ -433,6 +501,25 @@ impl NetworksView {
         let index = wanted.and_then(|w| nets.iter().position(|n| n.name == w)).unwrap_or(0);
         self.state.borrow_mut().selected = None;
         self.list.select_row(self.list.row_at_index(index as i32).as_ref());
+        #[cfg(debug_assertions)]
+        self.dev_edit_xml(&nets);
+    }
+
+    /// Debug builds: `VMNG_DEV_NET_EDIT=<vmng-test-… network>` selects it,
+    /// adds an MTU in its XML and presses Apply (tests).
+    #[cfg(debug_assertions)]
+    fn dev_edit_xml(self: &Rc<Self>, nets: &[NetworkDetails]) {
+        thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        let Ok(name) = std::env::var("VMNG_DEV_NET_EDIT") else { return };
+        if !name.starts_with("vmng-test-") || DONE.with(|d| d.replace(true)) {
+            return;
+        }
+        let Some(i) = nets.iter().position(|n| n.name == name) else { return };
+        self.list.select_row(self.list.row_at_index(i as i32).as_ref());
+        let text = self.state.borrow().xml_base.replace("</network>", "  <mtu size=\"1400\"/>\n</network>");
+        self.xml_buffer.set_text(&text);
+        assert!(self.apply_bar.reveals_child() && self.apply.is_sensitive());
+        self.apply.emit_clicked();
     }
 
     fn details(&self) -> Option<NetworkDetails> {
@@ -450,7 +537,12 @@ impl NetworksView {
             st.filling = true;
             st.base = Some(settings.clone());
             st.work = Some(settings.clone());
+            st.xml_base = d.config.to_xml().trim_end().to_owned();
+            st.xml_work = st.xml_base.clone();
         }
+        let xml = self.state.borrow().xml_base.clone();
+        self.xml_buffer.set_text(&xml);
+        self.xml_error.set_visible(false);
         self.title.set_label(&d.name);
         let users = self.users(&d);
         let used = if users.is_empty() {
@@ -546,9 +638,26 @@ impl NetworksView {
 
     fn update_bar(&self) {
         let st = self.state.borrow();
-        let dirty = st.base != st.work;
+        let form_dirty = st.base != st.work;
+        let xml_dirty = st.xml_base != st.xml_work;
+        let dirty = form_dirty || xml_dirty;
         self.apply_bar.set_reveal_child(dirty);
-        self.apply.set_sensitive(dirty && !self.error.is_visible());
+        self.apply.set_sensitive(dirty && !self.error.is_visible() && !self.xml_error.is_visible());
+        // One kind of change at a time: the settings or the XML.
+        for w in &self.form {
+            w.set_sensitive(!xml_dirty);
+        }
+        let editing = self.settings.get().xml_editing;
+        self.xml_view.set_editable(editing && !form_dirty);
+        self.xml_note.set_label(if !editing {
+            "Turn on “Allow editing the raw XML” in Preferences to change this."
+        } else if form_dirty {
+            "Apply or revert the changed settings to edit the XML."
+        } else if xml_dirty {
+            "The settings above update after you apply the XML."
+        } else {
+            "Changes here replace the network’s configuration when you press Apply."
+        });
     }
 
     fn run(
@@ -615,10 +724,19 @@ impl NetworksView {
         let (Some(d), Some(work)) = (self.details(), self.state.borrow().work.clone()) else { return };
         let name = d.name.clone();
         let Some(conn) = self.state.borrow().conn.clone() else { return };
+        let xml = {
+            let st = self.state.borrow();
+            (st.xml_work != st.xml_base).then(|| st.xml_work.clone())
+        };
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let n = name.clone();
-            let result = conn.call(move |c| c.update_network(&n, &work)).await;
+            let result = conn
+                .call(move |c| match xml {
+                    Some(xml) => c.define_network_xml(&n, &xml),
+                    None => c.update_network(&n, &work),
+                })
+                .await;
             let Some(this) = weak.upgrade() else { return };
             match result {
                 Err(e) => this.feedback.error("Couldn't save the network", e.message()),

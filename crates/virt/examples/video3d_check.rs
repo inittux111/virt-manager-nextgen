@@ -33,6 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_model: "host-passthrough".into(),
         install: InstallSource::Manual,
         disk: None,
+        existing_disk: None,
         network: NetworkChoice::None,
         graphics: "spice".into(),
         virtio: true,

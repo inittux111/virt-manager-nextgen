@@ -119,6 +119,8 @@ pub struct NetworkDetails {
     pub dns_domain: Option<String>,
     /// The full XML, for editing.
     pub xml: Element,
+    /// The saved configuration (what a restart uses), for XML editing.
+    pub config: Element,
 }
 
 impl NetworkDetails {
@@ -139,6 +141,7 @@ impl NetworkDetails {
             ipv4,
             ipv6,
             dns_domain: xml.find_attr("domain", "name").map(str::to_owned),
+            config: xml.clone(),
             xml,
         }
     }
@@ -220,6 +223,23 @@ pub fn apply_network_settings(xml: &mut Element, s: &NetworkSettings) -> std::re
     Ok(())
 }
 
+/// Checks edited network XML against the saved one: it must still be a
+/// network with the same name and UUID.
+pub fn check_network_xml(current: &Element, edited: &Element) -> std::result::Result<(), &'static str> {
+    if edited.name != "network" {
+        return Err("The XML must describe a network (<network>…</network>).");
+    }
+    if edited.find_text("name") != current.find_text("name") {
+        return Err("Networks can't be renamed.");
+    }
+    if let Some(uuid) = edited.find_text("uuid")
+        && current.find_text("uuid").as_deref() != Some(uuid.as_str())
+    {
+        return Err("The network's UUID can't be changed.");
+    }
+    Ok(())
+}
+
 /// Picks a free private /24 (192.168.100.0/24, 101, …).
 pub fn suggest_subnet(existing: &[NetworkDetails]) -> String {
     let used: Vec<u8> = existing
@@ -243,12 +263,17 @@ impl Connection {
         let mut out = Vec::new();
         for net in self.raw().list_all_networks(0)? {
             let xml = vmng_xml::parse(&net.get_xml_desc(0)?)?;
-            out.push(NetworkDetails::from_xml(
+            let persistent = net.is_persistent().unwrap_or(true);
+            let mut d = NetworkDetails::from_xml(
                 xml,
                 net.is_active().unwrap_or(false),
                 net.get_autostart().unwrap_or(false),
-                net.is_persistent().unwrap_or(true),
-            ));
+                persistent,
+            );
+            if persistent {
+                d.config = vmng_xml::parse(&net.get_xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
+            }
+            out.push(d);
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
@@ -279,6 +304,17 @@ impl Connection {
         }
         apply_network_settings(&mut xml, settings).map_err(|m| Error::Invalid(m.into()))?;
         Network::define_xml(self.raw(), &xml.to_xml())?;
+        Ok(())
+    }
+
+    /// Saves a network's configuration from edited XML. The name and UUID
+    /// must stay the same. A running network uses it after a restart.
+    pub fn define_network_xml(&self, name: &str, xml: &str) -> Result<()> {
+        let net = self.network(name)?;
+        let current = vmng_xml::parse(&net.get_xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
+        let edited = vmng_xml::parse(xml)?;
+        check_network_xml(&current, &edited).map_err(|m| Error::Invalid(m.into()))?;
+        Network::define_xml(self.raw(), &edited.to_xml())?;
         Ok(())
     }
 
@@ -383,5 +419,21 @@ mod tests {
         assert_eq!(NetworkDetails::from_xml(xml, true, true, true).describe(), "Bridge to br0");
         let d = NetworkDetails::from_xml(vmng_xml::parse(DEFAULT).unwrap(), true, true, true);
         assert_eq!(suggest_subnet(&[d]), "192.168.100.0/24");
+    }
+
+    #[test]
+    fn edited_xml_keeps_name_and_uuid() {
+        let cur = vmng_xml::parse("<network><name>n</name><uuid>u1</uuid></network>").unwrap();
+        let ok = vmng_xml::parse("<network><name>n</name><uuid>u1</uuid><mtu size='9000'/></network>").unwrap();
+        assert!(check_network_xml(&cur, &ok).is_ok());
+        let no_uuid = vmng_xml::parse("<network><name>n</name></network>").unwrap();
+        assert!(check_network_xml(&cur, &no_uuid).is_ok());
+        for bad in [
+            "<network><name>m</name></network>",
+            "<network><name>n</name><uuid>u2</uuid></network>",
+            "<pool><name>n</name></pool>",
+        ] {
+            assert!(check_network_xml(&cur, &vmng_xml::parse(bad).unwrap()).is_err(), "{bad}");
+        }
     }
 }

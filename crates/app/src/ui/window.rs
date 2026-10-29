@@ -331,7 +331,7 @@ impl MainWindow {
 
         let toasts = adw::ToastOverlay::new();
         let feedback = Feedback::new(&toasts, &window);
-        let networks_view = super::networks_view::NetworksView::new(feedback.clone());
+        let networks_view = super::networks_view::NetworksView::new(feedback.clone(), settings.clone());
         tab(View::Networks, networks_view.root.upcast_ref());
         let storage_view = super::storage_view::StorageView::new(feedback.clone());
         tab(View::Storage, storage_view.root.upcast_ref());

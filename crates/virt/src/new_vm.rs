@@ -87,6 +87,9 @@ pub struct NewVm {
     pub install: InstallSource,
     /// The system disk to create (not used when importing).
     pub disk: Option<NewDisk>,
+    /// An existing disk image to use as the system disk instead of creating
+    /// one; the installer still starts (unlike [`InstallSource::ImportDisk`]).
+    pub existing_disk: Option<String>,
     pub network: NetworkChoice,
     /// `spice`, `vnc` or `none`.
     pub graphics: String,
@@ -113,6 +116,17 @@ fn el(name: &str) -> Element {
 
 fn is_x86(arch: &str) -> bool {
     matches!(arch, "x86_64" | "i686")
+}
+
+/// Sets the image format of the disk whose source is `path`.
+fn set_disk_format(xml: &mut Element, path: &str, format: &str) {
+    let Some(devices) = xml.child_mut("devices") else { return };
+    for disk in devices.children.iter_mut().filter_map(|n| match n {
+        vmng_xml::Node::Element(e) if e.name == "disk" && e.find_attr("source", "file") == Some(path) => Some(e),
+        _ => None,
+    }) {
+        disk.child_or_insert("driver").set_attr("type", format);
+    }
 }
 
 /// Builds the domain XML. `disk_path` is the created or imported disk.
@@ -213,6 +227,7 @@ pub fn build_domain_xml(vm: &NewVm, disk_path: Option<&str>) -> Element {
     if let Some(path) = disk_path {
         let format = match &vm.install {
             InstallSource::ImportDisk(p) if !p.ends_with(".qcow2") => "raw",
+            _ if vm.existing_disk.as_ref().is_some_and(|p| !p.ends_with(".qcow2")) => "raw",
             _ => vm.disk.as_ref().map_or("qcow2", |d| d.format.as_str()),
         };
         let target = if disk_bus == "virtio" { format!("{disk_prefix}a") } else { next_sd() };
@@ -434,6 +449,7 @@ impl Connection {
         let mut created_disk: Option<String> = None;
         let disk_path = match (&vm.install, &vm.disk) {
             (InstallSource::ImportDisk(path), _) => Some(path.clone()),
+            _ if vm.existing_disk.is_some() => vm.existing_disk.clone(),
             (_, Some(disk)) => {
                 let ext = if disk.format == "qcow2" { ".qcow2" } else { ".img" };
                 let name = unique_file_name(&vm.name, ext, |n| !self.volume_name_free(&disk.pool, n));
@@ -447,11 +463,21 @@ impl Connection {
         // started, the configuration is replaced by the one that boots the
         // disk (it applies from the next start).
         let network = matches!(vm.install, InstallSource::Network(_));
-        let first = if network && start {
+        // An existing image's format comes from libvirt when it knows the
+        // file (the file name is only a guess).
+        let known_format =
+            created_disk.is_none().then(|| disk_path.as_deref().and_then(|p| self.image_format(p))).flatten();
+        let finish = |mut xml: Element| {
+            if let (Some(path), Some(format)) = (disk_path.as_deref(), known_format.as_deref()) {
+                set_disk_format(&mut xml, path, format);
+            }
+            xml
+        };
+        let first = finish(if network && start {
             install_xml(vm, disk_path.as_deref())
         } else {
             build_domain_xml(vm, disk_path.as_deref())
-        };
+        });
         let dom = match Domain::define_xml(self.raw(), &first.to_xml()) {
             Ok(d) => d,
             Err(e) => {
@@ -468,7 +494,7 @@ impl Connection {
         let mut restart_after_install = false;
         if network && start {
             // The same machine (same UUID), now booting from its disk.
-            let mut after = build_domain_xml(vm, disk_path.as_deref());
+            let mut after = finish(build_domain_xml(vm, disk_path.as_deref()));
             after.children.insert(1, vmng_xml::Node::Element(el("uuid").with_text(&uuid)));
             Domain::define_xml(self.raw(), &after.to_xml())?;
             restart_after_install = start_error.is_none();
@@ -485,6 +511,7 @@ impl Connection {
     pub fn preview_vm_xml(&self, vm: &NewVm) -> String {
         let disk = match &vm.install {
             InstallSource::ImportDisk(p) => Some(p.clone()),
+            _ if vm.existing_disk.is_some() => vm.existing_disk.clone(),
             _ => vm.disk.as_ref().map(|d| format!("<{}>/{}.qcow2", d.pool, vm.name)),
         };
         install_xml(vm, disk.as_deref()).to_xml()
@@ -511,6 +538,7 @@ mod tests {
             cpu_model: "host-passthrough".into(),
             install: InstallSource::Media("/isos/Fedora.iso".into()),
             disk: Some(NewDisk { pool: "default".into(), size: 20 << 30, format: "qcow2".into() }),
+            existing_disk: None,
             network: NetworkChoice::Bridge("br0".into()),
             graphics: "spice".into(),
             virtio: true,

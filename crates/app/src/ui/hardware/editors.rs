@@ -10,9 +10,9 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use vmng_virt::{
-    CpuMode, DeviceKind, DomainConfig, FirmwareChoice, InstallImage, NetworkSummary, PoolSummary, Topology,
-    disk_prefix, mitigations_on, next_disk_target, set_cpu_mode, set_firmware, set_mitigations, set_os_id,
-    set_topology, set_video_3d, units, video_3d,
+    CpuMode, DeviceKind, DomainConfig, FirmwareChoice, InstallImage, MemorySize, NetworkSummary, PoolSummary, Topology,
+    disk_prefix, mitigations_on, next_disk_target, normalize_mac, set_cpu_mode, set_firmware, set_memory,
+    set_mitigations, set_os_id, set_topology, set_video_3d, units, video_3d,
 };
 use vmng_xml::{Element, Node};
 
@@ -82,6 +82,8 @@ pub struct Choices {
     /// Named CPU models the host can run, and its CPU security mitigations.
     pub cpu_models: Vec<String>,
     pub cpu_security: Vec<String>,
+    /// The host's wired network cards (for a direct connection).
+    pub host_nics: Vec<String>,
 }
 
 // ── Row helpers ─────────────────────────────────────────────────────────
@@ -192,6 +194,13 @@ fn vbox() -> gtk::Box {
     gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(22).build()
 }
 
+/// A note inside a group of rows.
+fn note_row(text: &str) -> gtk::Label {
+    let l = note(text);
+    l.set_margin_top(8);
+    l
+}
+
 fn note(text: &str) -> gtk::Label {
     gtk::Label::builder().label(text).xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build()
 }
@@ -224,6 +233,66 @@ fn drop_address(e: &mut Element) {
 }
 
 // ── Editors ─────────────────────────────────────────────────────────────
+
+/// Name, title and description (domain level).
+pub fn overview(bind: &Bind) -> gtk::Box {
+    let b = vbox();
+    let g = group("Machine");
+    fact(&g, "Name", &bind.get(|e| e.find_text("name").unwrap_or_default()));
+    fact(&g, "UUID", &bind.get(|e| e.find_text("uuid").unwrap_or_default()));
+    let title = entry(
+        bind,
+        "Title (optional)",
+        |e| e.find_text("title").unwrap_or_default(),
+        |e, v| set_text_child(e, "title", v),
+    );
+    g.add(&title);
+    b.append(&g);
+    b.append(&note("The title is shown instead of the name in the list. Use Rename… to change the name."));
+
+    let d = group("Description");
+    let buffer = gtk::TextBuffer::new(None);
+    buffer.set_text(&bind.get(|e| e.find_text("description").unwrap_or_default()));
+    let view = gtk::TextView::builder()
+        .buffer(&buffer)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .accepts_tab(false)
+        .height_request(120)
+        .top_margin(12)
+        .bottom_margin(12)
+        .left_margin(12)
+        .right_margin(12)
+        .css_classes(["card", "description-view"])
+        .build();
+    view.update_property(&[gtk::accessible::Property::Label("Description")]);
+    let bind = bind.clone();
+    buffer.connect_changed(move |buf| {
+        let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+        bind.set(|e| set_text_child(e, "description", text.trim_end()));
+    });
+    d.add(&view);
+    b.append(&d);
+    b
+}
+
+/// Sets a text element of the domain (`<title>`, `<description>`), right
+/// after `<name>`/`<uuid>` as libvirt writes it, or removes it when empty.
+fn set_text_child(e: &mut Element, name: &str, text: &str) {
+    if text.is_empty() {
+        e.remove_children(|c| c.name == name);
+        return;
+    }
+    if let Some(c) = e.child_mut(name) {
+        c.set_text(text);
+        return;
+    }
+    let after = e
+        .children
+        .iter()
+        .rposition(|n| matches!(n, Node::Element(c) if matches!(c.name.as_str(), "name" | "uuid" | "title")))
+        .map_or(0, |i| i + 1);
+    e.children.insert(after, Node::Element(Element::new(name).with_text(text)));
+}
 
 /// Processor & memory (domain level).
 pub fn cpu_memory(bind: &Bind, choices: &Choices, host_cpus: u32, host_memory: u64) -> gtk::Box {
@@ -383,27 +452,67 @@ pub fn cpu_memory(bind: &Bind, choices: &Choices, host_cpus: u32, host_memory: u
     b.append(&layout);
 
     let mem = group("Memory");
-    let memory = spin(
-        bind,
-        "Memory (GiB)",
-        (0.5, (host_memory as f64 / units::GIB as f64).max(1.0), 0.5, 1),
-        |e| {
-            let el = e.child("currentMemory").or_else(|| e.child("memory"));
-            el.map_or(1.0, |m| {
-                units::to_bytes(m.text().parse().unwrap_or(0), m.attr("unit"), units::KIB) as f64 / units::GIB as f64
-            })
-        },
-        |e, v| {
-            let kib = ((v * units::GIB as f64) as u64 / units::KIB).to_string();
-            for name in ["memory", "currentMemory"] {
-                let m = e.child_or_insert(name);
-                m.set_attr("unit", "KiB");
-                m.set_text(kib.clone());
+    let gib = |bytes: u64| bytes as f64 / units::GIB as f64;
+    let to_bytes = |v: f64| ((v * units::GIB as f64) as u64 / units::MIB) * units::MIB;
+    let host_gib = gib(host_memory).max(1.0);
+    let start = bind.get(MemorySize::of);
+    let current = adw::SpinRow::with_range(0.25, host_gib, 0.25);
+    current.set_title("Memory (GiB)");
+    current.set_digits(2);
+    current.set_value(gib(start.current));
+    current.set_subtitle(&format!("The host has {}", format::bytes(host_memory)));
+    let raise = adw::SwitchRow::builder()
+        .title("Allow raising it while running")
+        .subtitle("Sets a maximum the memory can grow to without a restart; needs the guest's balloon driver")
+        .active(start.maximum > start.current)
+        .build();
+    let maximum = adw::SpinRow::with_range(0.25, host_gib, 0.25);
+    maximum.set_title("Maximum memory (GiB)");
+    maximum.set_digits(2);
+    maximum.set_value(gib(start.maximum));
+    maximum.set_visible(raise.is_active());
+    let apply = {
+        let (bind, current, raise, maximum) = (bind.clone(), current.clone(), raise.clone(), maximum.clone());
+        Rc::new(move || {
+            let cur = to_bytes(current.value());
+            let max = if raise.is_active() { to_bytes(maximum.value()).max(cur) } else { cur };
+            maximum.set_visible(raise.is_active());
+            let size = MemorySize { current: cur, maximum: max };
+            if bind.get(MemorySize::of) != size {
+                bind.set(|e| set_memory(e, size));
             }
-        },
-    );
-    memory.set_subtitle(&format!("The host has {}", format::bytes(host_memory)));
-    mem.add(&memory);
+        })
+    };
+    {
+        let (apply, maximum) = (apply.clone(), maximum.clone());
+        current.connect_value_notify(move |c| {
+            if maximum.value() < c.value() {
+                maximum.set_value(c.value());
+            }
+            apply();
+        });
+    }
+    {
+        let (apply, maximum, current) = (apply.clone(), maximum.clone(), current.clone());
+        raise.connect_active_notify(move |r| {
+            if r.is_active() && maximum.value() <= current.value() {
+                maximum.set_value((current.value() * 2.0).min(host_gib));
+            }
+            apply();
+        });
+    }
+    {
+        let (apply, current) = (apply.clone(), current.clone());
+        maximum.connect_value_notify(move |m| {
+            if m.value() < current.value() {
+                m.set_value(current.value());
+            }
+            apply();
+        });
+    }
+    mem.add(&current);
+    mem.add(&raise);
+    mem.add(&maximum);
     mem.add(&switch(
         bind,
         "Shared memory",
@@ -411,9 +520,7 @@ pub fn cpu_memory(bind: &Bind, choices: &Choices, host_cpus: u32, host_memory: u
         |e| e.find_attr("memoryBacking/access", "mode") == Some("shared"),
         |e, on| {
             if on {
-                let mb = e.child_or_insert("memoryBacking");
-                mb.child_or_insert("source").set_attr("type", "memfd");
-                mb.child_or_insert("access").set_attr("mode", "shared");
+                enable_shared_memory(e);
             } else if let Some(mb) = e.child_mut("memoryBacking") {
                 mb.remove_children(|c| c.name == "source" || c.name == "access");
                 if mb.children.is_empty() {
@@ -684,21 +791,61 @@ pub fn disk(bind: &Bind) -> gtk::Box {
         |e| e.find_attr("driver", "discard").unwrap_or_default().to_owned(),
         |e, v| set_attr_path(e, "driver", "discard", v),
     ));
-    opts.add(&switch(
+    let bus = bind.get(|e| e.find_attr("target", "bus").unwrap_or_default().to_owned());
+    if matches!(bus.as_str(), "usb" | "scsi") {
+        opts.add(&switch(
+            bind,
+            "Removable",
+            "The guest sees it as a removable drive, like a USB stick",
+            |e| e.find_attr("target", "removable") == Some("on"),
+            |e, on| set_attr_path(e, "target", "removable", if on { "on" } else { "" }),
+        ));
+    }
+    b.append(&opts);
+
+    let perf = group("Performance");
+    perf.add(&combo(
+        bind,
+        "Detect zeroes",
+        &[
+            ("", "Default (off)"),
+            ("unmap", "Free the space (needs Discard: pass to the image)"),
+            ("on", "Store zeroes efficiently"),
+            ("off", "Off"),
+        ],
+        |e| e.find_attr("driver", "detect_zeroes").unwrap_or_default().to_owned(),
+        |e, v| set_attr_path(e, "driver", "detect_zeroes", v),
+    ));
+    perf.add(&combo(
+        bind,
+        "I/O mode",
+        &[
+            ("", "Default"),
+            ("native", "Native (Linux AIO; needs cache mode None)"),
+            ("threads", "Threads"),
+            ("io_uring", "io_uring (newer kernels)"),
+        ],
+        |e| e.find_attr("driver", "io").unwrap_or_default().to_owned(),
+        |e, v| set_attr_path(e, "driver", "io", v),
+    ));
+    b.append(&perf);
+
+    let access = group("Access");
+    access.add(&switch(
         bind,
         "Read-only",
         "The guest can't change the disk",
         |e| e.child("readonly").is_some(),
         |e, on| toggle_child(e, "readonly", on),
     ));
-    opts.add(&switch(
+    access.add(&switch(
         bind,
         "Shareable",
         "Several machines may use this disk at the same time",
         |e| e.child("shareable").is_some(),
         |e, on| toggle_child(e, "shareable", on),
     ));
-    opts.add(&entry(
+    access.add(&entry(
         bind,
         "Serial number (optional)",
         |e| e.find_text("serial").unwrap_or_default(),
@@ -710,7 +857,7 @@ pub fn disk(bind: &Bind) -> gtk::Box {
             }
         },
     ));
-    b.append(&opts);
+    b.append(&access);
     b
 }
 
@@ -741,6 +888,9 @@ fn bus_combo(bind: &Bind, options: &[(&str, &str)]) -> adw::ComboRow {
             let t = e.child_or_insert("target");
             t.set_attr("bus", &bus);
             t.set_attr("dev", &target);
+            if !matches!(bus.as_str(), "usb" | "scsi") {
+                t.remove_attr("removable");
+            }
             drop_address(e);
         });
     });
@@ -872,6 +1022,9 @@ pub fn interface(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
     for br in &choices.bridges {
         options.push((format!("bridge:{br}"), format!("Bridge {br} · on your local network")));
     }
+    for nic in &choices.host_nics {
+        options.push((format!("direct:{nic}"), format!("Directly on {nic} (macvtap)")));
+    }
     options.push(("user:".into(), "User networking".into()));
     let refs: Vec<(&str, &str)> = options.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
     g.add(&combo(
@@ -889,13 +1042,23 @@ pub fn interface(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
             let (kind, name) = v.split_once(':').unwrap_or((v, ""));
             e.set_attr("type", kind);
             e.remove_children(|c| c.name == "source" || c.name == "target" || c.name == "virtualport");
-            match kind {
-                "network" => e.children.insert(0, Node::Element(Element::new("source").with_attr("network", name))),
-                "bridge" => e.children.insert(0, Node::Element(Element::new("source").with_attr("bridge", name))),
-                _ => {}
+            let source = match kind {
+                "network" => Some(Element::new("source").with_attr("network", name)),
+                "bridge" => Some(Element::new("source").with_attr("bridge", name)),
+                // Bridge mode lets machines on the same card see each other.
+                "direct" => Some(Element::new("source").with_attr("dev", name).with_attr("mode", "bridge")),
+                _ => None,
+            };
+            if let Some(source) = source {
+                e.children.insert(0, Node::Element(source));
             }
         },
     ));
+    if bind.get(|e| e.attr("type") == Some("direct")) || !choices.host_nics.is_empty() {
+        g.add(&note_row(
+            "A direct (macvtap) connection puts the machine on your local network, but the host itself can't reach it over that card.",
+        ));
+    }
     g.add(&combo(
         bind,
         "Model",
@@ -911,7 +1074,26 @@ pub fn interface(bind: &Bind, choices: &Choices, live: &Live) -> gtk::Box {
             drop_address(e);
         },
     ));
-    fact(&g, "MAC address", &bind.get(|e| e.find_attr("mac", "address").unwrap_or_default().to_owned()));
+    let mac = adw::EntryRow::builder()
+        .title("MAC address")
+        .text(bind.get(|e| e.find_attr("mac", "address").unwrap_or_default().to_owned()))
+        .build();
+    {
+        let bind = bind.clone();
+        mac.connect_changed(move |r| match normalize_mac(&r.text()) {
+            Ok(m) => {
+                r.remove_css_class("error");
+                if bind.get(|e| e.find_attr("mac", "address") != Some(m.as_str())) {
+                    bind.set(|e| e.child_or_insert("mac").set_attr("address", &m));
+                }
+            }
+            Err(msg) => {
+                r.add_css_class("error");
+                r.set_tooltip_text(Some(msg));
+            }
+        });
+    }
+    g.add(&mac);
     b.append(&g);
 
     let state = group("State");
@@ -1150,9 +1332,78 @@ pub fn filesystem(bind: &Bind) -> gtk::Box {
             e.child_or_insert("target").set_attr("dir", v);
         },
     ));
+    g.add(&switch(
+        bind,
+        "Read-only",
+        "The guest can read the folder but not change it",
+        |e| e.child("readonly").is_some(),
+        |e, on| toggle_child(e, "readonly", on),
+    ));
+    let method = combo(
+        bind,
+        "Method",
+        &[(SHARE_VIRTIOFS, "virtiofs (fast; needs shared memory)"), (SHARE_9P, "9p (older guests)")],
+        |e| share_method(e).to_owned(),
+        set_share_method,
+    );
+    {
+        // virtiofs needs the machine's memory to be shared.
+        let bind = bind.clone();
+        method.connect_selected_notify(move |_| {
+            if bind.get(|e| share_method(e) == SHARE_VIRTIOFS) {
+                bind.set_domain(enable_shared_memory);
+            }
+        });
+    }
+    g.add(&method);
     b.append(&g);
-    b.append(&note("In a Linux guest, mount it with: mount -t virtiofs <name> /mnt/<folder>"));
+    let hint = note(&mount_hint(&bind.get(|e| e.clone())));
+    {
+        let (bind, hint) = (bind.clone(), hint.clone());
+        method.connect_selected_notify(move |_| hint.set_label(&mount_hint(&bind.get(|e| e.clone()))));
+    }
+    b.append(&hint);
     b
+}
+
+pub const SHARE_VIRTIOFS: &str = "virtiofs";
+pub const SHARE_9P: &str = "9p";
+
+/// How a shared folder reaches the guest: virtiofs or 9p (libvirt's
+/// default driver when none is given).
+pub fn share_method(e: &Element) -> &'static str {
+    if e.find_attr("driver", "type") == Some("virtiofs") { SHARE_VIRTIOFS } else { SHARE_9P }
+}
+
+/// Switches a shared folder between virtiofs and 9p. virtiofs only
+/// supports passing files through as they are; 9p maps ownership so
+/// guest users can write.
+pub fn set_share_method(e: &mut Element, method: &str) {
+    e.remove_children(|c| c.name == "driver" || c.name == "binary");
+    if method == SHARE_VIRTIOFS {
+        e.set_attr("accessmode", "passthrough");
+        e.children.insert(0, Node::Element(Element::new("driver").with_attr("type", "virtiofs")));
+    } else {
+        e.set_attr("accessmode", "mapped");
+        e.children.insert(0, Node::Element(Element::new("driver").with_attr("type", "path")));
+    }
+    drop_address(e);
+}
+
+/// Shares the machine's memory with helper processes (virtiofs needs it).
+pub fn enable_shared_memory(domain: &mut Element) {
+    let mb = domain.child_or_insert("memoryBacking");
+    mb.child_or_insert("source").set_attr("type", "memfd");
+    mb.child_or_insert("access").set_attr("mode", "shared");
+}
+
+fn mount_hint(e: &Element) -> String {
+    let tag = e.find_attr("target", "dir").unwrap_or("<name>");
+    if share_method(e) == SHARE_VIRTIOFS {
+        format!("In a Linux guest, mount it with: mount -t virtiofs {tag} /mnt/{tag}")
+    } else {
+        format!("In a Linux guest, mount it with: mount -t 9p -o trans=virtio {tag} /mnt/{tag}")
+    }
 }
 
 pub fn controller(bind: &Bind) -> gtk::Box {

@@ -20,7 +20,7 @@ mkdir -p "$OUT"
 
 # ── libvirt checks ───────────────────────────────────────────────────────
 tmp=$(mktemp -d)
-mkdir -p "$tmp/selftest" "$tmp/netpool"
+mkdir -p "$tmp/selftest" "$tmp/netpool" "$tmp/options"
 export VMNG_TEST_URI="$VM_URI"
 check vm-snapshot-clone-rename-delete "$BIN/examples/selftest" "$tmp/selftest"
 check vm-create-start-delete "$BIN/examples/newvm_check" "$VM_URI" "$POOL" "$ISO"
@@ -30,6 +30,7 @@ check tpm-2.0 "$BIN/examples/tpm_check" "$ISO" 1
 check networks-and-storage-pools "$BIN/examples/net_pool_check" "$NET_URI" "$tmp/netpool"
 check cpu-model-layout-mitigations "$BIN/examples/cpu_check"
 check os-type-change "$BIN/examples/os_check"
+check machine-options "$BIN/examples/options_check" "$tmp/options"
 check network-boot-pxe "$BIN/examples/pxe_check"
 check_gpu video-3d-acceleration "$BIN/examples/video3d_check"
 rm -rf "$tmp"
@@ -68,20 +69,36 @@ vm="VMNG_DEV_SELECT=vmng-test-ui"
 check screen-machines screen machines "$vm"
 check screen-machines-narrow screen machines-narrow "$vm" VMNG_DEV_SIZE=400x760
 check screen-hardware screen hardware "$vm" VMNG_DEV_ACTION=vm.hardware
-check screen-boot-firmware screen boot-firmware "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=1
+check screen-overview screen overview "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=0
+check screen-boot-firmware screen boot-firmware "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=2
 check screen-add-hardware screen add-hardware "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ADD=1
 check screen-snapshots screen snapshots "$vm" VMNG_DEV_ACTION=vm.snapshots
 check screen-performance screen performance "$vm" VMNG_DEV_ACTION=vm.performance VMNG_SCREENSHOT_DELAY=14
 # Browsing to a new disc image for the running VM's CD-ROM drive.
 cp "$ISO" "$OUT/other-disc.iso"
-check screen-insert-disc screen insert-disc "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=2 \
+check screen-insert-disc screen insert-disc "$vm" VMNG_DEV_ACTION=vm.hardware VMNG_DEV_HW_ROW=3 \
     VMNG_DEV_CDROM_FILE="$OUT/other-disc.iso"
 check disc-inserted-in-running-vm sh -c "virsh -c '$VM_URI' domblklist vmng-test-ui | grep -q other-disc.iso"
 check screen-console screen console "$vm" VMNG_DEV_ACTION=vm.console VMNG_SCREENSHOT_DELAY=12
 check screen-text-console screen text-console "$vm" VMNG_DEV_ACTION=vm.console VMNG_DEV_CONSOLE_TEXT=1 VMNG_SCREENSHOT_DELAY=12
 check screen-host screen host VMNG_DEV_VIEW=host
 check screen-networks screen networks VMNG_DEV_VIEW=networks
+# A network's XML (on NET_URI, which has networks), only looked at.
+config_vm=$config
+config="$OUT/config-net"
+mkdir -p "$config/virt-manager-nextgen"
+printf '[connections]\nautoconnect=%s\nlast=%s\n' "$NET_URI" "$NET_URI" >"$config/virt-manager-nextgen/settings.ini"
+check screen-network-xml screen network-xml VMNG_DEV_VIEW=networks VMNG_DEV_NET_XML=1
+# Editing a network's XML in the app and pressing Apply saves it.
+printf '<network><name>vmng-test-netxml</name><ip address="192.168.231.1" netmask="255.255.255.0"/></network>' \
+    >"$OUT/vmng-test-netxml.xml"
+virsh -c "$NET_URI" net-define "$OUT/vmng-test-netxml.xml" >"$OUT/network-xml-edit.log" 2>&1
+check screen-network-xml-edit screen network-xml-edit VMNG_DEV_VIEW=networks VMNG_DEV_NET_EDIT=vmng-test-netxml
+check network-xml-edit-saved sh -c "virsh -c '$NET_URI' net-dumpxml --inactive vmng-test-netxml | grep -q \"mtu size='1400'\""
+virsh -c "$NET_URI" net-undefine vmng-test-netxml >>"$OUT/network-xml-edit.log" 2>&1
+config=$config_vm
 check screen-storage screen storage VMNG_DEV_VIEW=storage
+check screen-new-volume screen new-volume VMNG_DEV_VIEW=storage VMNG_DEV_NEW_VOLUME=1
 for step in 0 1 2 3; do
     check "screen-new-vm-step-$step" screen "new-vm-step-$step" VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_STEP=$step
 done
@@ -95,9 +112,28 @@ check network-install-boots-installer-once sh -c "virsh -c '$VM_URI' dumpxml vmn
     && ! virsh -c '$VM_URI' dumpxml --inactive vmng-test-netinst | grep -q '<kernel>'"
 virsh -c "$VM_URI" destroy vmng-test-netinst >"$OUT/network-install-cleanup.log" 2>&1
 virsh -c "$VM_URI" undefine vmng-test-netinst --nvram --storage vda >>"$OUT/network-install-cleanup.log" 2>&1
+# The New VM wizard with an existing disk image as the machine's disk.
+virsh -c "$VM_URI" vol-create-as "$POOL" vmng-test-existing.qcow2 64M --format qcow2 >"$OUT/existing-disk.log" 2>&1
+existing=$(virsh -c "$VM_URI" vol-path --pool "$POOL" vmng-test-existing.qcow2 2>>"$OUT/existing-disk.log")
+check screen-new-vm-existing-disk screen new-vm-existing-disk VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_STEP=2 \
+    VMNG_DEV_WIZARD_EXISTING="$existing"
+check new-vm-on-existing-disk screen new-vm-on-existing-disk VMNG_DEV_ACTION=win.new-vm VMNG_DEV_WIZARD_STEP=3 \
+    VMNG_DEV_WIZARD_EXISTING="$existing" VMNG_DEV_WIZARD_CREATE=vmng-test-existing VMNG_SCREENSHOT_DELAY=12
+check new-vm-uses-the-existing-disk sh -c "virsh -c '$VM_URI' domblklist vmng-test-existing | grep -q '$existing'"
+virsh -c "$VM_URI" destroy vmng-test-existing >>"$OUT/existing-disk.log" 2>&1
+virsh -c "$VM_URI" undefine vmng-test-existing --nvram >>"$OUT/existing-disk.log" 2>&1
+virsh -c "$VM_URI" vol-delete --pool "$POOL" vmng-test-existing.qcow2 >>"$OUT/existing-disk.log" 2>&1
 check screen-preferences screen preferences VMNG_DEV_ACTION=app.preferences
 check screen-shortcuts screen shortcuts VMNG_DEV_ACTION=app.shortcuts
 check screen-dark screen dark "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-dark
+# Appearance set to Dark in Preferences (the system asks for light).
+config_light=$config
+config="$OUT/config-dark"
+mkdir -p "$config/virt-manager-nextgen"
+printf '[connections]\nautoconnect=%s\nlast=%s\n[general]\nappearance=dark\n' "$VM_URI" "$VM_URI" \
+    >"$config/virt-manager-nextgen/settings.ini"
+check screen-appearance-dark screen appearance-dark "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-light
+config=$config_light
 check screen-high-contrast screen high-contrast "$vm" ADW_DEBUG_COLOR_SCHEME=prefer-light ADW_DEBUG_HIGH_CONTRAST=1
 
 virsh -c "$VM_URI" destroy vmng-test-ui >"$OUT/screens-test-vm-stop.log" 2>&1

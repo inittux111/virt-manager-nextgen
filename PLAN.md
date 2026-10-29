@@ -95,8 +95,18 @@ Done after the virt-manager comparison (0.3.0)
 - Changing a machine's operating system type
 - New VM: network install from an HTTP(S) install tree, and network boot (PXE)
 
+Done after the virt-manager comparison, second round (0.4.0)
+- Title and description per VM (Overview in the hardware list; shown right away on a running machine)
+- Current and maximum memory (raise it while running, through the guest's balloon driver)
+- Shared folders: read-only, and virtiofs or 9p
+- Disk: removable (USB/SCSI), detect zeroes, I/O mode
+- Network card: editable MAC address, direct connection (macvtap) on a wired host card that isn't part of a bridge
+- New Volume: allocate the whole size now, based on another image (backing file)
+- New VM wizard: use an existing disk image as the machine's disk (the installer still starts), or no disk
+- Networks: view and edit a network's XML (with "Allow editing the raw XML")
+- Preferences → General → Appearance: follow the system, light or dark
+
 Still open from the comparison (the user decides later)
-- Title and description per VM; current vs maximum memory; shared folder read-only and virtiofs/9p; disk removable / detect zeroes / I/O mode; editable MAC address and macvtap; volume preallocation and backing files; choosing an existing disk or custom location in the New VM wizard
 - Not recommended for a desktop: direct kernel boot, rare devices (parallel, watchdog, smartcard, panic, vsock, mediated devices), more pool types, TPM 1.2 / passthrough
 
 Decided against (desktop use only)

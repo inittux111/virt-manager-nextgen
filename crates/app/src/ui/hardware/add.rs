@@ -9,7 +9,7 @@ use gtk::glib;
 use vmng_virt::{disk_prefix, next_disk_target};
 use vmng_xml::Element;
 
-use super::editors::Choices;
+use super::editors::{self, Choices};
 use crate::backend::Conn;
 use crate::format;
 use crate::ui::feedback::Feedback;
@@ -238,13 +238,26 @@ fn controller_page() -> Page {
 }
 
 fn shared_folder_page() -> Page {
-    let (b, g) = form("Share a folder of the host with the guest (virtiofs). Shared memory is turned on when needed.");
+    let (b, g) = form("Share a folder of the host with the guest.");
     let path = Rc::new(RefCell::new(None::<String>));
     let folder = adw::ActionRow::builder().title("Folder on the host").subtitle("No folder chosen").build();
     folder.add_suffix(&browse_button(&folder, path.clone(), true));
     let tag = adw::EntryRow::builder().title("Name in the guest (mount tag)").build();
+    let readonly = adw::SwitchRow::builder()
+        .title("Read-only")
+        .subtitle("The guest can read the folder but not change it")
+        .build();
+    let (method, methods) = choice(
+        "Method",
+        &[
+            (editors::SHARE_VIRTIOFS, "virtiofs (fast; turns on shared memory)"),
+            (editors::SHARE_9P, "9p (older guests)"),
+        ],
+    );
     g.add(&folder);
     g.add(&tag);
+    g.add(&readonly);
+    g.add(&method);
     let build: Builder = Box::new(move || {
         let dir = path.borrow().clone().ok_or("Choose the folder to share.")?;
         let name = tag.text().trim().to_owned();
@@ -252,14 +265,16 @@ fn shared_folder_page() -> Page {
         if name.contains(char::is_whitespace) {
             return Err("The name can't contain spaces.".into());
         }
-        Ok(Plan::SharedFolder(
-            el("filesystem")
-                .with_attr("type", "mount")
-                .with_attr("accessmode", "passthrough")
-                .with_child(el("driver").with_attr("type", "virtiofs"))
-                .with_child(el("source").with_attr("dir", dir))
-                .with_child(el("target").with_attr("dir", name)),
-        ))
+        let mut fs = el("filesystem")
+            .with_attr("type", "mount")
+            .with_child(el("source").with_attr("dir", dir))
+            .with_child(el("target").with_attr("dir", name));
+        if readonly.is_active() {
+            fs.push(el("readonly"));
+        }
+        let m = value(&method, &methods);
+        editors::set_share_method(&mut fs, &m);
+        Ok(if m == editors::SHARE_VIRTIOFS { Plan::SharedFolder(fs) } else { Plan::Device(fs) })
     });
     Page { title: "Shared folder", icon: "folder-symbolic", section: None, widget: b.upcast(), build }
 }
@@ -276,6 +291,9 @@ fn network_page(choices: &Choices) -> Page {
     for br in &choices.bridges {
         options.push((format!("bridge:{br}"), format!("Bridge {br}")));
     }
+    for nic in &choices.host_nics {
+        options.push((format!("direct:{nic}"), format!("Directly on {nic} (macvtap)")));
+    }
     if !choices.session {
         options.push(("user:".into(), "User networking".into()));
     }
@@ -283,8 +301,15 @@ fn network_page(choices: &Choices) -> Page {
     let (source, sources) = choice("Connected to", &refs);
     let (model, models) =
         choice("Model", &[("virtio", "VirtIO (fastest)"), ("e1000e", "Intel e1000e"), ("rtl8139", "Realtek RTL8139")]);
+    let mac = adw::EntryRow::builder().title("MAC address (empty = pick one)").build();
     g.add(&source);
     g.add(&model);
+    g.add(&mac);
+    if !choices.host_nics.is_empty() {
+        g.set_description(Some(
+            "Add a network card. A direct (macvtap) connection puts the machine on your local network, but the host itself can't reach it over that card.",
+        ));
+    }
     let build: Builder = Box::new(move || {
         let v = value(&source, &sources);
         let (kind, name) = v.split_once(':').unwrap_or((&v, ""));
@@ -292,8 +317,13 @@ fn network_page(choices: &Choices) -> Page {
         match kind {
             "network" => i.push(el("source").with_attr("network", name)),
             "bridge" => i.push(el("source").with_attr("bridge", name)),
+            "direct" => i.push(el("source").with_attr("dev", name).with_attr("mode", "bridge")),
             _ => &mut i,
         };
+        let address = mac.text();
+        if !address.trim().is_empty() {
+            i.push(el("mac").with_attr("address", vmng_virt::normalize_mac(&address)?));
+        }
         i.push(el("model").with_attr("type", value(&model, &models)));
         Ok(Plan::Device(i))
     });

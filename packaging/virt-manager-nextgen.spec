@@ -44,6 +44,8 @@ Requires:       hicolor-icon-theme
 # Local QEMU/KVM machines need the libvirt daemon; remote hosts don't.
 Recommends:     libvirt-daemon-kvm
 Recommends:     libvirt-daemon-config-network
+# Shared folders with virtiofs.
+Recommends:     virtiofsd
 
 %description
 A modern desktop app for virtual machines on QEMU/KVM, through libvirt:

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
-use crate::settings::{ConsoleScaling, Prefs, Settings};
+use crate::settings::{Appearance, ConsoleScaling, Prefs, Settings};
 
 /// A switch row bound to one boolean preference.
 fn switch(
@@ -64,6 +64,21 @@ pub fn open(parent: &impl IsA<gtk::Widget>, settings: &Settings) {
 
 fn general_page(s: &Settings) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder().title("General").icon_name("preferences-system-symbolic").build();
+
+    let appearance = group("Appearance");
+    let style = adw::ComboRow::builder()
+        .title("Style")
+        .subtitle("Follow the system, or always use light or dark")
+        .model(&gtk::StringList::new(&["Follow system", "Light", "Dark"]))
+        .build();
+    style.set_selected(Appearance::ALL.iter().position(|(a, _)| *a == s.get().appearance).unwrap_or(0) as u32);
+    let st = s.clone();
+    style.connect_selected_notify(move |r| {
+        let (a, _) = Appearance::ALL[(r.selected() as usize).min(Appearance::ALL.len() - 1)];
+        st.update(|p| p.appearance = a);
+    });
+    appearance.add(&style);
+    page.add(&appearance);
 
     let features = group("Features");
     let tray = switch(

@@ -10,10 +10,16 @@ libadwaita.
 - Start, pause, shut down, clone and delete machines, and take snapshots
   (inside the disk or as separate files, with a picture of the screen)
 - Each machine's screen (SPICE or VNC) or text console in its own window
-- Edit hardware: CPU model and layout (sockets, cores, threads), security
+- Create machines on a new disk, an existing disk image, or no disk
+- Edit hardware: title and description, memory (also raised while
+  running), CPU model and layout (sockets, cores, threads), security
   mitigations, 3D acceleration, BIOS, UEFI or a specific UEFI firmware
-  file, TPM 2.0 (Windows 11), the operating system type
-- Manage the host's virtual networks and storage pools
+  file, TPM 2.0 (Windows 11), the operating system type, disk options
+  (removable, detect zeroes, I/O mode), the MAC address and a direct
+  (macvtap) connection, shared folders (virtiofs or 9p, read-only)
+- Manage the host's virtual networks (also as XML) and storage pools
+  (fully allocated volumes, volumes based on another image)
+- Light, dark or the system's style (Preferences → General)
 - CPU, memory, disk and network graphs, and guest details through the
   QEMU guest agent
 
@@ -160,17 +166,24 @@ For each system it runs:
    - TPM 2.0
    - CPU models, CPU layout and security mitigations
    - changing the operating system type
+   - machine options: a new VM on an existing disk image, title and
+     description, current and maximum memory (also while running), shared
+     folders (9p and virtiofs, read-only), disk options, a chosen MAC address
    - network boot (PXE) and a network install from Debian's mirror (needs
      internet)
    - 3D acceleration (skipped where QEMU can't use the graphics card, e.g.
      inside the Debian container with an NVIDIA card)
    - snapshots inside the disk and as separate files
-   - virtual networks and storage pools
+   - virtual networks (also edited as XML) and storage pools, with fully
+     allocated volumes and a volume based on another image
 3. **Screens**: a screenshot of every main screen (machines, hardware,
-   firmware, Add Hardware, snapshots, performance, the console and text
-   console, host, networks, storage, every New VM step, Preferences,
-   Keyboard Shortcuts, narrow window, dark and high contrast), with a
-   running test VM. Each must render without errors.
+   firmware, overview, Add Hardware, snapshots, performance, the console and
+   text console, host, networks and a network's XML, storage and New Volume,
+   every New VM step, a new VM on an existing disk, Preferences, Keyboard
+   Shortcuts, narrow window, dark, the Dark appearance setting and high
+   contrast), with a running test VM. Each must render without errors.
+   Editing a network's XML in the app and creating a VM on an existing disk
+   are checked in libvirt afterwards.
 
 Where it runs:
 
