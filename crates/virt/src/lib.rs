@@ -11,6 +11,7 @@
 mod config;
 mod connection;
 mod console;
+mod cpu;
 mod devices;
 mod domain;
 mod error;
@@ -25,10 +26,12 @@ mod snapshot;
 mod stats;
 mod storage;
 pub mod units;
+mod video;
 
-pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceConfig};
+pub use config::{DiskConfig, DomainConfig, Firmware, GraphicsConfig, InterfaceConfig, set_os_id};
 pub use connection::{Connection, ConnectionKind, GuestDetails, HostInfo, PoolSummary};
 pub use console::ConsoleStream;
+pub use cpu::{CpuMode, SECURITY_FEATURES, Topology, mitigations_on, set_cpu_mode, set_mitigations, set_topology};
 pub use devices::{DeviceKind, DeviceRef, disk_prefix, list_devices, next_disk_target, replace_device};
 pub use domain::{DomainState, DomainSummary, PowerAction};
 pub use error::{Error, Result};
@@ -39,9 +42,12 @@ pub use manage::{CloneDiskMode, unique_file_name, unique_name, validate_vm_name}
 pub use networks::{Ipv4Config, NetworkDetails, NetworkMode, NetworkSettings, apply_network_settings, suggest_subnet};
 pub use new_vm::{Created, GuestFamily, InstallSource, NetworkChoice, NewDisk, NewVm, build_domain_xml};
 pub use screenshot::Screenshot;
-pub use snapshot::{SnapshotInfo, SnapshotLocation, validate_snapshot_name};
+pub use snapshot::{
+    SnapshotInfo, SnapshotLocation, SnapshotModes, SnapshotOptions, validate_snapshot_name, validate_snapshot_name_for,
+};
 pub use stats::{BlockStats, DomainStats, HostStats, NetStats, StatsWanted};
 pub use storage::{NewPool, PoolDetails, PoolKind, VolumeInfo, pool_xml};
+pub use video::{set_video_3d, video_3d};
 
 /// Silences libvirt's default behaviour of printing every error to stderr.
 /// Errors are still reported through [`Error`].

@@ -637,6 +637,7 @@ impl ConsoleWindow {
 
     fn connect_screen(self: &Rc<Self>, conn: Conn, vm: DomainSummary, generation: u32) {
         let protocol = vm.config.graphics.first().map(|g| g.kind.clone()).unwrap_or_default();
+        let index = vm.config.graphics.first().map_or(0, |g| g.index);
         self.state.borrow_mut().protocol = protocol.clone();
         self.apply_scaling();
         self.screen.set_release_keys(parse_keys(&self.settings.get().console_grab_keys));
@@ -644,7 +645,7 @@ impl ConsoleWindow {
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let id = uuid.clone();
-            let fd = conn.call(move |c| c.open_graphics_fd(&id, 0)).await;
+            let fd = conn.call(move |c| c.open_graphics_fd(&id, index)).await;
             let Some(this) = weak.upgrade() else { return };
             if !this.current(generation) {
                 return;
@@ -670,7 +671,7 @@ impl ConsoleWindow {
                         Rc::new(move |reply| {
                             let (conn, uuid) = (conn.clone(), uuid.clone());
                             glib::spawn_future_local(async move {
-                                let r = conn.call(move |c| c.open_graphics_fd(&uuid, 0)).await;
+                                let r = conn.call(move |c| c.open_graphics_fd(&uuid, index)).await;
                                 reply(r.map_err(|e| e.message().to_owned()));
                             });
                         })

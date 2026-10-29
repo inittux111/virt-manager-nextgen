@@ -11,7 +11,7 @@ use virt::connect::Connect;
 use virt::domain::Domain;
 use virt::storage_pool::StoragePool;
 use virt::storage_vol::StorageVol;
-use vmng_virt::{CloneDiskMode, Connection, ConnectionKind};
+use vmng_virt::{CloneDiskMode, Connection, ConnectionKind, SnapshotLocation, SnapshotOptions};
 
 const NAME: &str = "vmng-selftest";
 
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(ConnectionKind::from_uri(&uri))?;
 
     let run = || -> Result<(), Box<dyn std::error::Error>> {
-        conn.create_snapshot(&uuid, "first", "made by selftest")?;
+        conn.create_snapshot(&uuid, "first", "made by selftest", None)?;
         conn.set_snapshot_description(&uuid, "first", "edited")?;
         let snaps = conn.list_snapshots(&uuid)?;
         assert_eq!(snaps.len(), 1);
@@ -62,13 +62,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // A running machine is captured with its memory.
         conn.power(&uuid, vmng_virt::PowerAction::Start)?;
-        conn.create_snapshot(&uuid, "live", "")?;
+        conn.create_snapshot(&uuid, "live", "", None)?;
         let live = conn.list_snapshots(&uuid)?;
         assert!(live[0].has_memory(), "{live:?}");
         conn.revert_snapshot(&uuid, "live")?;
         conn.power(&uuid, vmng_virt::PowerAction::ForceOff)?;
         conn.delete_snapshot(&uuid, "live")?;
         println!("live snapshot ok");
+
+        // An external one (separate files), its memory in a chosen folder.
+        assert!(conn.snapshot_modes(&uuid)?.internal);
+        conn.power(&uuid, vmng_virt::PowerAction::Start)?;
+        let options = SnapshotOptions { location: SnapshotLocation::External, memory_dir: Some(dir.clone()) };
+        conn.create_snapshot(&uuid, "external", "", Some(&options))?;
+        let ext = conn.list_snapshots(&uuid)?;
+        assert_eq!(ext[0].location, SnapshotLocation::External, "{ext:?}");
+        assert!(ext[0].has_memory());
+        let mem = format!("{dir}/{NAME}-external.mem");
+        assert!(std::path::Path::new(&mem).exists(), "memory file {mem}");
+        conn.power(&uuid, vmng_virt::PowerAction::ForceOff)?;
+        conn.revert_snapshot(&uuid, "external")?;
+        conn.power(&uuid, vmng_virt::PowerAction::ForceOff)?;
+        conn.delete_snapshot(&uuid, "external")?;
+        assert!(conn.list_snapshots(&uuid)?.is_empty());
+        println!("external snapshot ok");
 
         let clone_uuid = conn.clone_domain(
             &uuid,

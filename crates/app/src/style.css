@@ -90,6 +90,7 @@ chart.network { color: var(--purple-4); }
 .snapshot-timeline { background: none; }
 .snapshot-timeline > row { padding: 0; background: none; border-radius: 12px; }
 .snapshot-timeline > row:focus-visible { outline-offset: -2px; }
+.snapshot-screen { border-radius: 8px; }
 .snapshot-entry { padding: 12px 14px; margin: 4px 0; border-radius: 12px; }
 .snapshot-timeline > row:hover .snapshot-entry { background-color: color-mix(in srgb, currentColor 5%, transparent); }
 .snapshot-timeline > row:selected .snapshot-entry {

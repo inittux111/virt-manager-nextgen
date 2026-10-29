@@ -342,8 +342,7 @@ impl HardwareView {
                     let arch = xml.find_attr("os/type", "arch").unwrap_or("x86_64").to_owned();
                     let machine = xml.find_attr("os/type", "machine").map(str::to_owned);
                     let virt = xml.attr("type").unwrap_or("kvm").to_owned();
-                    let loaders =
-                        c.domain_caps(&arch, machine.as_deref(), &virt).map(|d| d.loaders).unwrap_or_default();
+                    let caps = c.domain_caps(&arch, machine.as_deref(), &virt).unwrap_or_default();
                     let choices = Choices {
                         networks: c.list_networks().unwrap_or_default().into_iter().filter(|n| n.active).collect(),
                         bridges: c.list_bridges(),
@@ -357,7 +356,9 @@ impl HardwareView {
                             .collect(),
                         session: matches!(c.kind(), vmng_virt::ConnectionKind::Session),
                         arch,
-                        loaders,
+                        loaders: caps.loaders,
+                        cpu_models: caps.cpu_models,
+                        cpu_security: caps.cpu_security_features,
                     };
                     Ok((xml, choices))
                 })
@@ -547,7 +548,7 @@ impl HardwareView {
             Item::CpuMemory => (
                 "Processor & memory".to_owned(),
                 "How much of the host this machine may use.".to_owned(),
-                editors::cpu_memory(&self.bind(Target::Domain), host_cpus, host_mem),
+                editors::cpu_memory(&self.bind(Target::Domain), &choices, host_cpus, host_mem),
             ),
             Item::Boot => (
                 "Boot & firmware".to_owned(),

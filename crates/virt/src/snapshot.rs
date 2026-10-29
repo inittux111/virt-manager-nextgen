@@ -79,6 +79,43 @@ pub fn validate_snapshot_name(name: &str) -> std::result::Result<(), &'static st
     }
 }
 
+/// Checks the name for how the snapshot is taken: QEMU names its job for
+/// an internal snapshot of a running machine after the snapshot, and job
+/// names may only use letters, digits, `-`, `.` and `_`.
+pub fn validate_snapshot_name_for(
+    name: &str,
+    running: bool,
+    location: SnapshotLocation,
+) -> std::result::Result<(), &'static str> {
+    validate_snapshot_name(name)?;
+    if running
+        && location == SnapshotLocation::Internal
+        && !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
+    {
+        return Err("For a running machine stored inside the disk, use only letters, digits, - . and _ (no spaces).");
+    }
+    Ok(())
+}
+
+/// How to take a snapshot (virt-manager's "Snapshot Mode" and memory
+/// location).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotOptions {
+    pub location: SnapshotLocation,
+    /// For an external snapshot of a running machine: the folder for the
+    /// memory file; `None` puts it next to the first disk.
+    pub memory_dir: Option<String>,
+}
+
+/// What a machine allows for a new snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotModes {
+    /// Whether the data can be stored inside the disk images.
+    pub internal: bool,
+    /// The suggested choice.
+    pub default: SnapshotLocation,
+}
+
 /// Decides whether a snapshot can be stored inside the disk images.
 ///
 /// Internal snapshots need every snapshotted disk to be qcow2 and, with
@@ -97,6 +134,7 @@ pub(crate) fn snapshot_xml(
     description: &str,
     running: bool,
     location: SnapshotLocation,
+    memory_dir: Option<&str>,
 ) -> String {
     let mut xml = Element::new("domainsnapshot").with_child(Element::new("name").with_text(name));
     if !description.trim().is_empty() {
@@ -105,13 +143,15 @@ pub(crate) fn snapshot_xml(
     if location == SnapshotLocation::External {
         if running {
             // Memory goes next to the first disk, where libvirt can write.
-            let dir = config
-                .disks
-                .iter()
-                .find_map(|d| d.source_path.as_deref())
-                .and_then(|p| std::path::Path::new(p).parent())
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "/var/lib/libvirt/qemu/snapshot".to_owned());
+            let dir = memory_dir.map(|d| d.trim_end_matches('/').to_owned()).unwrap_or_else(|| {
+                config
+                    .disks
+                    .iter()
+                    .find_map(|d| d.source_path.as_deref())
+                    .and_then(|p| std::path::Path::new(p).parent())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "/var/lib/libvirt/qemu/snapshot".to_owned())
+            });
             let file = format!("{dir}/{}-{}.mem", config.name, sanitize(name));
             xml.push(Element::new("memory").with_attr("snapshot", "external").with_attr("file", file));
         } else {
@@ -146,15 +186,38 @@ impl Connection {
         Ok(out)
     }
 
+    /// Which kinds of snapshot the machine can take.
+    pub fn snapshot_modes(&self, uuid: &str) -> Result<SnapshotModes> {
+        let dom = self.domain(uuid)?;
+        let config = DomainConfig::from_xml(&vmng_xml::parse(&dom.get_xml_desc(0)?)?);
+        let location = snapshot_location(&config);
+        Ok(SnapshotModes { internal: location == SnapshotLocation::Internal, default: location })
+    }
+
     /// Takes a snapshot. A running machine is captured with its memory, so
-    /// restoring it resumes exactly where it was.
-    pub fn create_snapshot(&self, uuid: &str, name: &str, description: &str) -> Result<()> {
+    /// restoring it resumes exactly where it was. `options` picks where it
+    /// is stored (by default as [`snapshot_modes`](Self::snapshot_modes)
+    /// suggests).
+    pub fn create_snapshot(
+        &self,
+        uuid: &str,
+        name: &str,
+        description: &str,
+        options: Option<&SnapshotOptions>,
+    ) -> Result<()> {
         validate_snapshot_name(name).map_err(|m| Error::Invalid(m.to_owned()))?;
         let dom = self.domain(uuid)?;
         let config = DomainConfig::from_xml(&vmng_xml::parse(&dom.get_xml_desc(0)?)?);
         let running = dom.is_active()?;
-        let location = snapshot_location(&config);
-        let xml = snapshot_xml(&config, name, description, running, location);
+        let location = options.map_or_else(|| snapshot_location(&config), |o| o.location);
+        if location == SnapshotLocation::Internal && snapshot_location(&config) != SnapshotLocation::Internal {
+            return Err(Error::Invalid(
+                "This machine's disks can't hold snapshots (they must all be qcow2). Use separate files.".into(),
+            ));
+        }
+        validate_snapshot_name_for(name, running, location).map_err(|m| Error::Invalid(m.to_owned()))?;
+        let memory_dir = options.and_then(|o| o.memory_dir.as_deref());
+        let xml = snapshot_xml(&config, name, description, running, location, memory_dir);
         let mut flags = CREATE_ATOMIC;
         if location == SnapshotLocation::External && !running {
             flags |= CREATE_DISK_ONLY;
@@ -236,18 +299,21 @@ mod tests {
             disks: vec![disk("vda", "raw", "disk"), disk("sda", "raw", "cdrom")],
             ..Default::default()
         };
-        let xml =
-            vmng_xml::parse(&snapshot_xml(&c, "Before update", "note", true, SnapshotLocation::External)).unwrap();
+        let xml = vmng_xml::parse(&snapshot_xml(&c, "Before update", "note", true, SnapshotLocation::External, None))
+            .unwrap();
         assert_eq!(xml.find_text("name").as_deref(), Some("Before update"));
         assert_eq!(xml.find_attr("memory", "file"), Some("/images/vm-Before_update.mem"));
         let modes: Vec<_> = xml.child("disks").unwrap().elements().map(|d| d.attr("snapshot").unwrap()).collect();
         assert_eq!(modes, ["external", "no"]);
+        let chosen = snapshot_xml(&c, "s", "", true, SnapshotLocation::External, Some("/big/disk/"));
+        assert_eq!(vmng_xml::parse(&chosen).unwrap().find_attr("memory", "file"), Some("/big/disk/vm-s.mem"));
     }
 
     #[test]
     fn internal_xml_is_minimal() {
-        let xml = vmng_xml::parse(&snapshot_xml(&DomainConfig::default(), "s", "", false, SnapshotLocation::Internal))
-            .unwrap();
+        let xml =
+            vmng_xml::parse(&snapshot_xml(&DomainConfig::default(), "s", "", false, SnapshotLocation::Internal, None))
+                .unwrap();
         assert!(xml.child("disks").is_none() && xml.child("description").is_none());
     }
 
@@ -273,5 +339,10 @@ mod tests {
         for bad in ["", "  ", "a/b", ".hidden", "-x", "tab\there"] {
             assert!(validate_snapshot_name(bad).is_err(), "{bad:?}");
         }
+        let live = |n| validate_snapshot_name_for(n, true, SnapshotLocation::Internal);
+        assert!(live("Snapshot-2026-10-29-05.44").is_ok());
+        assert!(live("Before update").is_err());
+        assert!(validate_snapshot_name_for("Before update", true, SnapshotLocation::External).is_ok());
+        assert!(validate_snapshot_name_for("Before update", false, SnapshotLocation::Internal).is_ok());
     }
 }

@@ -2,7 +2,9 @@
 //!
 //! The protocol backends (SPICE, VNC) own the pixel buffer; the widget
 //! copies it into a GPU texture once per frame when something changed,
-//! telling GTK which region is new so only that part is uploaded.
+//! telling GTK which region is new so only that part is uploaded. With 3D
+//! acceleration (SPICE OpenGL) the guest image is a GPU buffer instead,
+//! shown as it is ([`GuestScreen::set_gpu_image`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -86,6 +88,9 @@ mod imp {
         pub source: Cell<Option<Source>>,
         pub dirty: RefCell<Option<cairo::Region>>,
         pub texture: RefCell<Option<gdk::Texture>>,
+        /// A GPU buffer shown instead of the source, and whether it is
+        /// stored bottom row first.
+        pub gpu: RefCell<Option<(gdk::Texture, bool)>>,
         pub backend: RefCell<Option<Rc<dyn Backend>>>,
         pub scaling: Cell<Scaling>,
         /// Guest pixels per widget pixel and the image origin, for input.
@@ -131,10 +136,8 @@ mod imp {
 
     impl WidgetImpl for GuestScreen {
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
-            let size = self
-                .source
-                .get()
-                .map_or(0, |s| if orientation == gtk::Orientation::Horizontal { s.width } else { s.height });
+            let size =
+                self.image_size().map_or(0, |(w, h)| if orientation == gtk::Orientation::Horizontal { w } else { h });
             match self.scaling.get() {
                 Scaling::Fit => (1, size.max(1), -1, -1),
                 Scaling::Native => (size, size, -1, -1),
@@ -151,8 +154,15 @@ mod imp {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let obj = self.obj();
             let (w, h) = (obj.width() as f32, obj.height() as f32);
-            self.update_texture();
-            let Some(texture) = self.texture.borrow().clone() else { return };
+            let gpu = self.gpu.borrow().clone();
+            let (texture, flipped) = match gpu {
+                Some(g) => g,
+                None => {
+                    self.update_texture();
+                    let Some(texture) = self.texture.borrow().clone() else { return };
+                    (texture, false)
+                }
+            };
             let (tw, th) = (texture.width() as f32, texture.height() as f32);
             let scale = match self.scaling.get() {
                 Scaling::Fit => (w / tw).min(h / th),
@@ -166,11 +176,27 @@ mod imp {
             } else {
                 gsk::ScalingFilter::Linear
             };
-            snapshot.append_scaled_texture(&texture, filter, &graphene::Rect::new(x, y, dw, dh));
+            if flipped {
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(x, y + dh));
+                snapshot.scale(1.0, -1.0);
+                snapshot.append_scaled_texture(&texture, filter, &graphene::Rect::new(0.0, 0.0, dw, dh));
+                snapshot.restore();
+            } else {
+                snapshot.append_scaled_texture(&texture, filter, &graphene::Rect::new(x, y, dw, dh));
+            }
         }
     }
 
     impl GuestScreen {
+        /// The size of the image shown.
+        pub fn image_size(&self) -> Option<(i32, i32)> {
+            if let Some((t, _)) = self.gpu.borrow().as_ref() {
+                return Some((t.width(), t.height()));
+            }
+            self.source.get().map(|s| (s.width, s.height))
+        }
+
         /// Copies the guest image into a texture if it changed.
         fn update_texture(&self) {
             let Some(region) = self.dirty.borrow_mut().take() else { return };
@@ -247,16 +273,32 @@ impl GuestScreen {
 
     /// The guest resolution, if an image is shown.
     pub fn guest_size(&self) -> Option<(i32, i32)> {
-        self.imp().source.get().map(|s| (s.width, s.height))
+        self.imp().image_size()
     }
 
     /// The current image, e.g. for a screenshot.
     pub fn texture(&self) -> Option<gdk::Texture> {
         let imp = self.imp();
+        if let Some((t, _)) = imp.gpu.borrow().as_ref() {
+            return Some(t.clone());
+        }
         if imp.dirty.borrow().is_some() {
             self.queue_draw();
         }
         imp.texture.borrow().clone()
+    }
+
+    /// Shows a GPU buffer (3D acceleration) instead of the source;
+    /// `flipped` when its first row is the bottom one. `None` goes back
+    /// to the source.
+    pub(crate) fn set_gpu_image(&self, image: Option<(gdk::Texture, bool)>) {
+        let imp = self.imp();
+        let old = imp.image_size();
+        imp.gpu.replace(image);
+        if imp.image_size() != old {
+            self.queue_resize();
+        }
+        self.queue_draw();
     }
 
     /// Sets where the image lives. The pointer must stay valid until

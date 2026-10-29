@@ -52,9 +52,13 @@ pub struct InterfaceConfig {
     pub target_dev: Option<String>,
 }
 
-/// A `<graphics>` device.
+/// A `<graphics>` device that can be connected to (SPICE or VNC; helpers
+/// such as `egl-headless`, which renders 3D acceleration, are left out).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphicsConfig {
+    /// Its position among all `<graphics>`, as libvirt counts them (for
+    /// [`Connection::open_graphics_fd`](crate::Connection::open_graphics_fd)).
+    pub index: u32,
     /// `spice`, `vnc`, …
     pub kind: String,
     /// TCP port while running (`-1` or absent when automatic and stopped).
@@ -126,7 +130,10 @@ impl DomainConfig {
             disks: devs("disk").map(disk).collect(),
             interfaces: devs("interface").map(interface).collect(),
             graphics: devs("graphics")
-                .map(|g| GraphicsConfig {
+                .enumerate()
+                .filter(|(_, g)| matches!(g.attr("type"), Some("spice" | "vnc")))
+                .map(|(i, g)| GraphicsConfig {
+                    index: i as u32,
                     kind: g.attr("type").unwrap_or_default().to_owned(),
                     port: g.attr("port").and_then(|p| p.parse().ok()).filter(|&p| p > 0),
                     listen: g.attr("listen").map(str::to_owned),
@@ -146,6 +153,19 @@ fn os_id(dom: &Element) -> Option<String> {
     let info = meta.elements().find(|e| local(e, "libosinfo"))?;
     let os = info.elements().find(|e| local(e, "os"))?;
     os.attr("id").map(str::to_owned)
+}
+
+/// Sets the operating system the domain is marked as (libosinfo metadata,
+/// as virt-manager writes it), keeping any other metadata.
+pub fn set_os_id(dom: &mut Element, id: &str) {
+    let local = |e: &Element, name: &str| e.name.rsplit(':').next() == Some(name);
+    let meta = dom.child_or_insert("metadata");
+    meta.remove_children(|e| local(e, "libosinfo"));
+    meta.push(
+        Element::new("libosinfo:libosinfo")
+            .with_attr("xmlns:libosinfo", "http://libosinfo.org/xmlns/libvirt/domain/1.0")
+            .with_child(Element::new("libosinfo:os").with_attr("id", id)),
+    );
 }
 
 fn firmware(dom: &Element) -> Option<Firmware> {
@@ -238,6 +258,10 @@ mod tests {
         let c = DomainConfig::from_xml(&vmng_xml::parse(XML).unwrap());
         assert_eq!(c.name, "fedora");
         assert_eq!(c.os_id.as_deref(), Some("http://fedoraproject.org/fedora/40"));
+        let mut dom = vmng_xml::parse(XML).unwrap();
+        set_os_id(&mut dom, "http://debian.org/debian/13");
+        assert_eq!(DomainConfig::from_xml(&dom).os_id.as_deref(), Some("http://debian.org/debian/13"));
+        assert_eq!(dom.child("metadata").unwrap().elements().count(), 1);
         assert_eq!(c.max_memory, 8 * units::GIB);
         assert_eq!(c.memory, 4 * units::GIB);
         assert_eq!(c.vcpus, 2);

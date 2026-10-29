@@ -10,8 +10,9 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use vmng_virt::{
-    DeviceKind, FirmwareChoice, InstallImage, NetworkSummary, PoolSummary, disk_prefix, next_disk_target, set_firmware,
-    units,
+    CpuMode, DeviceKind, DomainConfig, FirmwareChoice, InstallImage, NetworkSummary, PoolSummary, Topology,
+    disk_prefix, mitigations_on, next_disk_target, set_cpu_mode, set_firmware, set_mitigations, set_os_id,
+    set_topology, set_video_3d, units, video_3d,
 };
 use vmng_xml::{Element, Node};
 
@@ -78,6 +79,9 @@ pub struct Choices {
     /// offers for it.
     pub arch: String,
     pub loaders: Vec<String>,
+    /// Named CPU models the host can run, and its CPU security mitigations.
+    pub cpu_models: Vec<String>,
+    pub cpu_security: Vec<String>,
 }
 
 // ── Row helpers ─────────────────────────────────────────────────────────
@@ -116,6 +120,13 @@ fn combo(
     }
     let labels: Vec<&str> = opts.iter().map(|(_, l)| l.as_str()).collect();
     let row = adw::ComboRow::builder().title(title).model(&gtk::StringList::new(&labels)).build();
+    // Set before the selection: changing it later resets the selection,
+    // which would count as an edit. It lets long lists be searched.
+    row.set_expression(Some(gtk::PropertyExpression::new(
+        gtk::StringObject::static_type(),
+        None::<gtk::Expression>,
+        "string",
+    )));
     row.set_selected(opts.iter().position(|(v, _)| *v == current).unwrap_or(0) as u32);
     let bind = bind.clone();
     row.connect_selected_notify(move |r| {
@@ -215,55 +226,161 @@ fn drop_address(e: &mut Element) {
 // ── Editors ─────────────────────────────────────────────────────────────
 
 /// Processor & memory (domain level).
-pub fn cpu_memory(bind: &Bind, host_cpus: u32, host_memory: u64) -> gtk::Box {
+pub fn cpu_memory(bind: &Bind, choices: &Choices, host_cpus: u32, host_memory: u64) -> gtk::Box {
     let b = vbox();
     let cpu = group("Processor");
+    let max_cpus = f64::from(host_cpus.max(1)) * 2.0;
     let vcpus = spin(
         bind,
         "Virtual CPUs",
-        (1.0, f64::from(host_cpus.max(1)).max(1.0) * 2.0, 1.0, 0),
+        (1.0, max_cpus, 1.0, 0),
         |e| {
             e.child("vcpu").map_or(1.0, |v| {
                 v.attr("current").and_then(|c| c.parse().ok()).unwrap_or_else(|| v.text().parse().unwrap_or(1.0))
             })
         },
         |e, v| {
-            let vcpu = e.child_or_insert("vcpu");
-            vcpu.remove_attr("current");
-            vcpu.set_text((v as u32).max(1).to_string());
+            // A set layout decides the count; it's kept in step below.
+            if Topology::of(e).is_none() {
+                let vcpu = e.child_or_insert("vcpu");
+                vcpu.remove_attr("current");
+                vcpu.set_text((v as u32).max(1).to_string());
+            }
         },
     );
     vcpus.set_subtitle(&format!("The host has {host_cpus} logical CPUs"));
     cpu.add(&vcpus);
-    cpu.add(&combo(
+
+    // Which CPU the guest sees: the host's own, a model like it, QEMU's
+    // default, or one of the named models the host can run.
+    let mut options: Vec<(String, String)> = vec![
+        ("host-passthrough".into(), "Copy the host CPU (fastest)".into()),
+        ("host-model".into(), "Similar to the host (portable)".into()),
+        (String::new(), "Hypervisor default".into()),
+    ];
+    options.extend(choices.cpu_models.iter().map(|m| (format!("model:{m}"), m.clone())));
+    let options: Vec<(&str, &str)> = options.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+    let model = combo(
         bind,
         "CPU model",
-        &[
-            ("host-passthrough", "Same as the host (fastest)"),
-            ("host-model", "Similar to the host (portable)"),
-            ("custom", "A specific CPU model"),
-            ("", "Hypervisor default"),
-        ],
-        |e| e.find_attr("cpu", "mode").unwrap_or_default().to_owned(),
-        |e, v| {
-            if v.is_empty() {
-                e.remove_children(|c| c.name == "cpu");
-            } else {
-                let cpu = e.child_or_insert("cpu");
-                cpu.set_attr("mode", v);
-                if v != "custom" {
-                    cpu.remove_children(|c| c.name == "model");
-                }
-                if v == "host-passthrough" {
-                    cpu.set_attr("check", "none");
-                    cpu.set_attr("migratable", "on");
-                } else {
-                    cpu.remove_attr("migratable");
-                }
-            }
+        &options,
+        |e| match CpuMode::of(e) {
+            CpuMode::HostPassthrough => "host-passthrough".into(),
+            CpuMode::HostModel => "host-model".into(),
+            CpuMode::Model(m) => format!("model:{m}"),
+            CpuMode::Default => String::new(),
         },
-    ));
+        |e, v| {
+            let mode = match v {
+                "host-passthrough" => CpuMode::HostPassthrough,
+                "host-model" => CpuMode::HostModel,
+                "" => CpuMode::Default,
+                m => CpuMode::Model(m.trim_start_matches("model:").to_owned()),
+            };
+            set_cpu_mode(e, &mode);
+        },
+    );
+    model.set_enable_search(true);
+    cpu.add(&model);
+
+    let available = choices.cpu_security.clone();
+    let mitigations = switch(
+        bind,
+        "Security mitigations",
+        "Pass the host CPU's security fixes to a named CPU model",
+        |e| mitigations_on(e, &choices.cpu_security),
+        move |e, on| set_mitigations(e, &available, on),
+    );
+    let named = |b: &Bind| b.get(|e| matches!(CpuMode::of(e), CpuMode::Model(_)));
+    mitigations.set_sensitive(!choices.cpu_security.is_empty() && named(bind));
+    if choices.cpu_security.is_empty() {
+        mitigations.set_subtitle("The host CPU reports none");
+    }
+    {
+        let (bind, mitigations, has) = (bind.clone(), mitigations.clone(), !choices.cpu_security.is_empty());
+        let available = choices.cpu_security.clone();
+        model.connect_selected_notify(move |_| {
+            let is_named = named(&bind);
+            mitigations.set_sensitive(has && is_named);
+            // A newly picked model keeps the switch's choice.
+            if is_named && mitigations.is_active() {
+                bind.set(|e| set_mitigations(e, &available, true));
+            }
+        });
+    }
+    cpu.add(&mitigations);
     b.append(&cpu);
+
+    // The CPU layout: virt-manager's "Manually set CPU topology".
+    let layout = group("CPU layout");
+    layout.set_description(Some(
+        "How the virtual CPUs are arranged. Some systems, such as Windows desktop editions, only use one or two \
+         sockets, so give them more cores instead.",
+    ));
+    let current = bind.get(Topology::of);
+    let manual = adw::SwitchRow::builder()
+        .title("Set the layout manually")
+        .subtitle("Otherwise QEMU decides")
+        .active(current.is_some())
+        .build();
+    layout.add(&manual);
+    let start = current.unwrap_or_else(|| Topology::for_vcpus(vcpus.value() as u32));
+    let rows: Vec<adw::SpinRow> =
+        [("Sockets", start.sockets), ("Cores per socket", start.cores), ("Threads per core", start.threads)]
+            .into_iter()
+            .map(|(title, value)| {
+                let row = adw::SpinRow::with_range(1.0, max_cpus, 1.0);
+                row.set_title(title);
+                row.set_value(f64::from(value));
+                row.set_visible(current.is_some());
+                layout.add(&row);
+                row
+            })
+            .collect();
+    let dies = start.dies;
+    let apply = {
+        let (bind, manual, vcpus, rows) = (bind.clone(), manual.clone(), vcpus.clone(), rows.clone());
+        Rc::new(move || {
+            let on = manual.is_active();
+            let topology = on.then(|| {
+                let v = |i: usize| rows[i].value() as u32;
+                Topology { sockets: v(0), dies, cores: v(1), threads: v(2) }
+            });
+            for r in &rows {
+                r.set_visible(on);
+            }
+            vcpus.set_sensitive(!on);
+            bind.set(|e| set_topology(e, topology));
+            if let Some(t) = topology {
+                vcpus.set_value(f64::from(t.total()));
+                vcpus.set_subtitle(&format!("{} from the layout; the host has {host_cpus} logical CPUs", t.total()));
+            } else {
+                vcpus.set_subtitle(&format!("The host has {host_cpus} logical CPUs"));
+            }
+        })
+    };
+    vcpus.set_sensitive(current.is_none());
+    if let Some(t) = current {
+        vcpus.set_subtitle(&format!("{} from the layout; the host has {host_cpus} logical CPUs", t.total()));
+    }
+    {
+        let (apply, rows, vcpus) = (apply.clone(), rows.clone(), vcpus.clone());
+        manual.connect_active_notify(move |m| {
+            if m.is_active() {
+                // Start from the current count: one socket, that many cores.
+                let t = Topology::for_vcpus(vcpus.value() as u32);
+                rows[0].set_value(f64::from(t.sockets));
+                rows[1].set_value(f64::from(t.cores));
+                rows[2].set_value(f64::from(t.threads));
+            }
+            apply();
+        });
+    }
+    for r in &rows {
+        let apply = apply.clone();
+        r.connect_value_notify(move |_| apply());
+    }
+    b.append(&layout);
 
     let mem = group("Memory");
     let memory = spin(
@@ -317,6 +434,7 @@ fn bootable(e: &Element) -> bool {
 /// Boot & firmware (domain level).
 pub fn boot(bind: &Bind, choices: &Choices) -> gtk::Box {
     let b = vbox();
+    b.append(&operating_system(bind));
     let fw = group("Firmware");
     fw.set_description(Some("Changing the firmware of an installed system usually stops it from starting."));
     // BIOS, UEFI (libvirt picks the file), then each firmware file, like
@@ -394,6 +512,39 @@ pub fn boot(bind: &Bind, choices: &Choices) -> gtk::Box {
     b.append(&order);
     fill_boot_list(bind, &list);
     b
+}
+
+/// The operating system the machine is marked as (virt-manager's "OS
+/// information"): it decides the logo and is what the New VM wizard based
+/// its defaults on. Changing it changes no hardware.
+fn operating_system(bind: &Bind) -> adw::PreferencesGroup {
+    let g = group("Operating system");
+    let row = adw::ActionRow::builder().title("Installed system").build();
+    let logo = crate::ui::widgets::OsLogo::new(32);
+    row.add_prefix(&logo);
+    let show = {
+        let (row, logo) = (row.clone(), logo.clone());
+        move |id: Option<&str>| {
+            row.set_subtitle(&id.map_or_else(|| "Unknown".to_owned(), crate::osdb::display_name));
+            logo.set_logo(id.and_then(crate::osdb::logo_key));
+        }
+    };
+    show(bind.get(|e| DomainConfig::from_xml(e).os_id).as_deref());
+    let change = gtk::Button::builder().label("Change…").valign(gtk::Align::Center).build();
+    row.add_suffix(&change);
+    let bind = bind.clone();
+    change.connect_clicked(move |button| {
+        let current = bind.get(|e| DomainConfig::from_xml(e).os_id);
+        let query = current.as_deref().and_then(crate::osdb::lookup).map(|o| o.name.clone()).unwrap_or_default();
+        let (bind, show) = (bind.clone(), show.clone());
+        crate::ui::os_chooser::choose_os(button, &query, move |os| {
+            let id = os.id.clone();
+            bind.set_domain(|e| set_os_id(e, &id));
+            show(Some(&id));
+        });
+    });
+    g.add(&row);
+    g
 }
 
 fn boot_candidates(e: &Element) -> Vec<(usize, Option<u32>, String)> {
@@ -849,13 +1000,22 @@ pub fn graphics(bind: &Bind) -> gtk::Box {
             }
         },
     ));
+    let vnc = bind.get(|e| e.attr("type") == Some("vnc"));
     let password = adw::PasswordEntryRow::builder()
-        .title("Password (optional)")
+        .title(if vnc { "Password (optional, up to 8 characters)" } else { "Password (optional)" })
         .text(bind.get(|e| e.attr("passwd").unwrap_or_default().to_owned()))
         .build();
     let bind2 = bind.clone();
     password.connect_changed(move |r| {
         let text = r.text().to_string();
+        // VNC passwords are at most 8 characters; QEMU won't start with a
+        // longer one, so it isn't saved until it fits.
+        let too_long = bind2.get(|e| e.attr("type") == Some("vnc")) && text.chars().count() > VNC_PASSWORD_MAX;
+        if too_long {
+            r.add_css_class("error");
+            return;
+        }
+        r.remove_css_class("error");
         bind2.set(|e| {
             if text.is_empty() {
                 e.remove_attr("passwd");
@@ -869,10 +1029,13 @@ pub fn graphics(bind: &Bind) -> gtk::Box {
     b
 }
 
+/// The longest password VNC accepts.
+const VNC_PASSWORD_MAX: usize = 8;
+
 pub fn video(bind: &Bind) -> gtk::Box {
     let b = vbox();
     let g = group("Video");
-    g.add(&combo(
+    let model = combo(
         bind,
         "Model",
         &[
@@ -890,7 +1053,36 @@ pub fn video(bind: &Bind) -> gtk::Box {
             *m = Element::new("model").with_attr("type", v);
             drop_address(e);
         },
-    ));
+    );
+    g.add(&model);
+    let Target::Device(index) = bind.target else { return b };
+    let accel = adw::SwitchRow::builder()
+        .title("3D acceleration")
+        .subtitle("Draws with the host's graphics card: smoother Linux desktops. VirtIO only")
+        .active(bind.get(video_3d))
+        .build();
+    let is_virtio = |b: &Bind| b.get(|e| e.find_attr("model", "type") == Some("virtio"));
+    accel.set_sensitive(is_virtio(bind));
+    {
+        let bind = bind.clone();
+        accel.connect_active_notify(move |r| {
+            let on = r.is_active();
+            bind.set_domain(|d| set_video_3d(d, index, on));
+        });
+    }
+    {
+        // Another model has no 3D acceleration.
+        let (bind, accel) = (bind.clone(), accel.clone());
+        model.connect_selected_notify(move |_| {
+            let virtio = is_virtio(&bind);
+            accel.set_sensitive(virtio);
+            if !virtio {
+                accel.set_active(false);
+                bind.set_domain(|d| set_video_3d(d, index, false));
+            }
+        });
+    }
+    g.add(&accel);
     b.append(&g);
     b
 }

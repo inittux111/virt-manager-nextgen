@@ -26,6 +26,8 @@ fn bus_name(bus: Option<&str>) -> &str {
 pub fn is_listed(d: &DeviceRef) -> bool {
     match &d.kind {
         DeviceKind::Emulator | DeviceKind::Memballoon => false,
+        // Renders 3D acceleration; set through the video card's switch.
+        DeviceKind::Graphics => d.element.attr("type") != Some("egl-headless"),
         // The audio backend is plumbing for the sound card.
         DeviceKind::Other(name) if name == "audio" => false,
         DeviceKind::Controller => !matches!(d.element.attr("type"), Some("pci" | "virtio-serial" | "sata" | "ide")),

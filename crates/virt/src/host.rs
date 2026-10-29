@@ -61,12 +61,24 @@ pub struct DomainCaps {
     pub tpm: bool,
     pub video_models: Vec<String>,
     pub graphics_types: Vec<String>,
+    /// Named CPU models this host can run (`usable='yes'`).
+    pub cpu_models: Vec<String>,
+    /// The CPU security mitigations the host's CPU has (from
+    /// [`SECURITY_FEATURES`](crate::SECURITY_FEATURES)).
+    pub cpu_security_features: Vec<String>,
 }
 
 fn enum_values(el: Option<&Element>, name: &str) -> Vec<String> {
     el.and_then(|e| e.children_named("enum").find(|en| en.attr("name") == Some(name)))
         .map(|en| en.children_named("value").map(Element::text).collect())
         .unwrap_or_default()
+}
+
+/// A supported `<mode>` of the domain capabilities' `<cpu>`.
+fn cpu_mode<'a>(xml: &'a Element, name: &str) -> Option<&'a Element> {
+    xml.child("cpu")?
+        .children_named("mode")
+        .find(|m| m.attr("name") == Some(name) && m.attr("supported") == Some("yes"))
 }
 
 impl DomainCaps {
@@ -87,6 +99,21 @@ impl DomainCaps {
                 && enum_values(tpm, "backendModel").iter().any(|b| b == "emulator"),
             video_models: enum_values(xml.find("devices/video"), "modelType"),
             graphics_types: enum_values(xml.find("devices/graphics"), "type"),
+            cpu_models: cpu_mode(xml, "custom")
+                .map(|m| {
+                    m.children_named("model").filter(|c| c.attr("usable") == Some("yes")).map(Element::text).collect()
+                })
+                .unwrap_or_default(),
+            cpu_security_features: cpu_mode(xml, "host-model")
+                .map(|m| {
+                    m.children_named("feature")
+                        .filter(|f| f.attr("policy") == Some("require"))
+                        .filter_map(|f| f.attr("name"))
+                        .filter(|n| crate::SECURITY_FEATURES.contains(n))
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -271,6 +298,10 @@ mod tests {
              <devices><video supported='yes'><enum name='modelType'><value>vga</value><value>virtio</value></enum></video>\
              <graphics supported='yes'><enum name='type'><value>vnc</value><value>spice</value></enum></graphics>\
              <tpm supported='yes'><enum name='backendModel'><value>emulator</value></enum></tpm></devices>\
+             <cpu><mode name='host-model' supported='yes'><model>EPYC</model>\
+             <feature policy='require' name='x2apic'/><feature policy='require' name='spec-ctrl'/>\
+             <feature policy='disable' name='ssbd'/></mode>\
+             <mode name='custom' supported='yes'><model usable='yes'>qemu64</model><model usable='no'>Broadwell</model></mode></cpu>\
              </domainCapabilities>",
         )
         .unwrap();
@@ -279,5 +310,7 @@ mod tests {
         assert_eq!(c.machine, "pc-q35-10.2");
         assert!(c.video_models.contains(&"virtio".to_owned()));
         assert!(c.graphics_types.contains(&"spice".to_owned()));
+        assert_eq!(c.cpu_models, ["qemu64"]);
+        assert_eq!(c.cpu_security_features, ["spec-ctrl"]);
     }
 }

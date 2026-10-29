@@ -70,6 +70,11 @@ impl FormDialog {
     /// Shows a problem with the input; `None` clears it and re-enables the
     /// primary button.
     pub fn set_error(&self, message: Option<&str>) {
+        // Debug builds: unattended test runs see the message in the log.
+        #[cfg(debug_assertions)]
+        if let Some(m) = message {
+            eprintln!("form error: {m}");
+        }
         self.error.set_visible(message.is_some());
         self.error.set_label(message.unwrap_or_default());
         self.primary.set_sensitive(message.is_none());

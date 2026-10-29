@@ -32,7 +32,7 @@ const GUEST_POLL_EVERY: u64 = 5;
 const PREVIEW_POLL_EVERY: u64 = 2;
 
 /// Turns a captured screen into something GTK can draw.
-fn screenshot_texture(shot: vmng_virt::Screenshot) -> Option<gdk::Texture> {
+pub(crate) fn screenshot_texture(shot: vmng_virt::Screenshot) -> Option<gdk::Texture> {
     match shot {
         vmng_virt::Screenshot::Rgb { width, height, pixels } => {
             // Four bytes per pixel: renderers handle 3-byte RGB poorly.
@@ -1092,7 +1092,12 @@ impl MainWindow {
             let result = conn.call(move |c| c.power(&uuid, action)).await;
             let Some(this) = weak.upgrade() else { return };
             if let Err(e) = result {
-                this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), e.message());
+                let mut details = e.message().to_owned();
+                if let Some(hint) = start_hint(&details) {
+                    details.push_str("\n\n");
+                    details.push_str(hint);
+                }
+                this.feedback.error(&format!("Couldn't {} {name}", action.label().to_lowercase()), &details);
             }
             this.refresh();
         });
@@ -1516,4 +1521,17 @@ impl JobBar {
     fn finish(&self) {
         self.revealer.set_reveal_child(false);
     }
+}
+
+/// Plain advice for start failures whose libvirt message doesn't say what
+/// to do.
+fn start_hint(details: &str) -> Option<&'static str> {
+    // 3D acceleration: QEMU couldn't use the graphics card. On the System
+    // connection QEMU runs confined (SELinux), which NVIDIA's own driver
+    // isn't allowed to work in.
+    (details.contains("egl:") || details.contains("render node")).then_some(
+        "The machine's 3D acceleration couldn't use the graphics card. Turn off 3D acceleration in Hardware → \
+         Video, or run the machine on the User session connection. On the System connection, some graphics \
+         drivers (such as NVIDIA's own) aren't allowed to run inside the virtual machine's process.",
+    )
 }

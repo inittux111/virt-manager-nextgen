@@ -5,7 +5,7 @@
 //! `open-fd` signal, which the caller's [`FdProvider`] supplies.
 
 use std::cell::{Cell, RefCell};
-use std::os::fd::{IntoRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, IntoRawFd, OwnedFd};
 use std::rc::{Rc, Weak};
 
 use gtk::glib;
@@ -27,6 +27,58 @@ const MOUSE_MODE_CLIENT: i32 = 2;
 #[link(name = "spice-client-glib-2.0")]
 unsafe extern "C" {
     fn spice_audio_get(session: *mut ffi::GObject, context: *mut std::ffi::c_void) -> *mut ffi::GObject;
+    fn spice_display_channel_get_gl_scanout(channel: *mut ffi::GObject) -> *const GlScanout;
+    fn spice_display_channel_gl_draw_done(channel: *mut ffi::GObject);
+}
+
+/// `SpiceGlScanout`: the guest image as a GPU buffer (3D acceleration).
+#[repr(C)]
+struct GlScanout {
+    fd: i32,
+    width: u32,
+    height: u32,
+    stride: u32,
+    /// A DRM fourcc.
+    format: u32,
+    y0top: glib::ffi::gboolean,
+}
+
+/// SPICE doesn't pass the buffer's memory layout (modifier), so the
+/// driver's implicit one is used, as SPICE's own GTK widget does.
+const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+
+/// Turns the channel's current GPU buffer into a texture. The texture
+/// gets its own copy of the descriptor, since SPICE closes its own when
+/// the next buffer arrives.
+fn gl_texture(display: &glib::Object) -> Option<(gtk::gdk::Texture, bool)> {
+    // SAFETY: a valid display channel; the scanout (owned by the channel)
+    // is valid until the next one, and we only read it here.
+    let scanout = unsafe { spice_display_channel_get_gl_scanout(ptr(display)).as_ref() }?;
+    if scanout.fd < 0 || scanout.width == 0 || scanout.height == 0 {
+        return None;
+    }
+    // SAFETY: the descriptor is open while the scanout is current.
+    let fd = unsafe { BorrowedFd::borrow_raw(scanout.fd) }.try_clone_to_owned().ok()?;
+    let raw = fd.as_raw_fd();
+    let builder = gtk::gdk::DmabufTextureBuilder::new()
+        .set_display(&gtk::gdk::Display::default()?)
+        .set_width(scanout.width)
+        .set_height(scanout.height)
+        .set_fourcc(scanout.format)
+        .set_modifier(DRM_FORMAT_MOD_INVALID)
+        .set_n_planes(1)
+        .set_stride(0, scanout.stride)
+        .set_offset(0, 0);
+    // SAFETY: `raw` stays open until the release function drops `fd`,
+    // which GTK calls once it no longer needs the buffer.
+    let texture = unsafe { builder.set_fd(0, raw).build_with_release_func(move || drop(fd)) };
+    match texture {
+        Ok(t) => Some((t, scanout.y0top == 0)),
+        Err(e) => {
+            glib::g_warning!("vmng-display", "can't show the 3D-accelerated display: {e}");
+            None
+        }
+    }
 }
 
 fn ptr(o: &glib::Object) -> *mut ffi::GObject {
@@ -191,6 +243,23 @@ impl SpiceBackend {
     }
 
     fn setup_display(&self, display: &glib::Object) {
+        // 3D acceleration: the guest image arrives as GPU buffers.
+        let screen = self.screen.clone();
+        display.connect_local("gl-draw", false, move |args| {
+            let ch = args[0].get::<glib::Object>().ok()?;
+            if let Some(s) = screen.upgrade() {
+                s.set_gpu_image(gl_texture(&ch));
+            }
+            // SAFETY: a valid display channel.
+            unsafe { spice_display_channel_gl_draw_done(ptr(&ch)) };
+            None
+        });
+        let screen = self.screen.clone();
+        display.connect_notify_local(Some("gl-scanout"), move |ch, _| {
+            if let Some(s) = screen.upgrade() {
+                s.set_gpu_image(gl_texture(ch));
+            }
+        });
         let screen = self.screen.clone();
         display.connect_local("display-primary-create", false, move |args| {
             let s = screen.upgrade()?;
