@@ -52,7 +52,8 @@ Description: Create, run and manage QEMU/KVM virtual machines
  A modern desktop app for virtual machines on QEMU/KVM, through libvirt:
  create machines with automatic OS detection, run and snapshot them, use
  their screen or text console, change their hardware, and manage the
- host's virtual networks and storage pools.
+ host's virtual networks and storage pools, here or on other computers
+ over SSH.
 CONTROL
 deb="/work/virt-manager-nextgen_${version}_${arch}.deb"
 dpkg-deb --root-owner-group --build "$root" "$deb"

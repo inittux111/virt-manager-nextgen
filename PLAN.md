@@ -15,11 +15,13 @@ I want the the same core features as the current virt-manager and also the follo
 Connections / hypervisors
 - QEMU/KVM, either system-wide or a per-user session
 - Connecting automatically at startup
+- Remote QEMU/KVM hosts over SSH, system-wide or a user session, with SSH key login
 
 New VM wizard
 - virtual machine only
 - Install methods:
   - Local ISO image or CD-ROM
+  - Network install from an install tree, or network boot (PXE)
   - Import an existing disk image
   - Manual install
 - Choose the architecture, machine type and virtualization type
@@ -37,6 +39,7 @@ VM management
 - No permanent sidebar: GNOME-style header tabs switch between Machines, Host, Networks and Storage (a bar at the bottom in narrow windows); the main menu switches between connections (system / user session), so the VM list gets the full window
 - The VM list shows a modern-looking logo for each VM, matching its guest OS (for example Fedora, Ubuntu, Windows), with a clean generic icon when the OS is unknown
 - Run, pause, shut down, reboot, force off, save, delete, and optionally delete the VM's storage
+- Start a VM when the host boots (autostart)
 - Clone VMs
 - Take, restore and manage snapshots
 - Edit hardware details for every device
@@ -116,7 +119,8 @@ Done after the health review (not released yet)
 - Randomized stress tests for the XML reader and writer; GitHub checks the minimum Rust version
 
 Still open from the comparison (the user decides later)
-- Not recommended for a desktop: direct kernel boot, rare devices (parallel, watchdog, smartcard, panic, vsock, mediated devices), more pool types, TPM 1.2 / passthrough
+- Not built: connections over TLS or with a password typed into the app, hypervisors other than QEMU/KVM
+- Not recommended for a desktop: direct kernel boot, rare devices (parallel, watchdog, smartcard, panic, vsock, mediated devices), more pool types (disk, ZFS, Ceph/RBD, Gluster, multipath, SCSI host adapters), TPM 1.2 / passthrough
 
 Decided against (desktop use only)
 - USB host devices / USB redirection, PCI passthrough, migration, libguestfs (remote hosts over SSH were later added on request)

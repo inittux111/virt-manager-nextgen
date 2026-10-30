@@ -30,9 +30,13 @@ Everything below is also in virt-manager.
 **Connections**
 - The local QEMU/KVM System connection and User session, connected at
   startup if you choose
-- Other computers over SSH (their System connection or a user session),
-  logging in with your SSH key; their machines' screens come through an SSH
-  tunnel
+
+**Remote computers**
+- Connect to another computer's QEMU/KVM host over SSH (main menu → Add Remote
+  Computer…), using its System connection or a user session
+- Log in with your SSH key; machines' screens and text consoles come through
+  SSH, so nothing extra is opened in its firewall (see
+  [Remote computers](#remote-computers))
 
 **Creating machines**
 - Install from an installer image (ISO) or the computer's optical drive

@@ -51,7 +51,8 @@ Recommends:     virtiofsd
 A modern desktop app for virtual machines on QEMU/KVM, through libvirt:
 create machines with automatic OS detection, run and snapshot them, use
 their screen or text console, change their hardware, and manage the
-host's virtual networks and storage pools.
+host's virtual networks and storage pools, here or on other computers
+over SSH.
 
 %prep
 %autosetup -a 1

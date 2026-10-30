@@ -19,6 +19,7 @@
       <li>Use the machine's screen (SPICE or VNC) or its text console</li>
       <li>Change hardware: processor, memory, disks, networks, displays and more</li>
       <li>Manage the host's virtual networks and storage pools</li>
+      <li>Manage machines on other QEMU/KVM computers over SSH</li>
       <li>Follow CPU, memory, disk and network use, and read guest details through the QEMU guest agent</li>
     </ul>
   </description>
