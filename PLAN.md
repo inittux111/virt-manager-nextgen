@@ -109,11 +109,17 @@ Done after the virt-manager comparison, second round (0.4.0)
 - Starting a machine when the host boots (Boot & firmware → Startup)
 - Regression tests: one per fixed bug (crates/virt/tests/regressions.rs, locally and on GitHub) and a "viewing changes nothing" check of every hardware page
 
+Done after the health review (not released yet)
+- Log file for bug reports (~/.local/state/virt-manager-nextgen/app.log), shown in About → Troubleshooting
+- Console: impossible screen and pointer sizes from a VM are refused instead of crashing
+- Network install: a secure (https) download can't be redirected to an insecure (http) one
+- Randomized stress tests for the XML reader and writer; GitHub checks the minimum Rust version
+
 Still open from the comparison (the user decides later)
 - Not recommended for a desktop: direct kernel boot, rare devices (parallel, watchdog, smartcard, panic, vsock, mediated devices), more pool types, TPM 1.2 / passthrough
 
 Decided against (desktop use only)
-- USB host devices / USB redirection, PCI passthrough, remote hosts over SSH, migration, libguestfs
+- USB host devices / USB redirection, PCI passthrough, migration, libguestfs (remote hosts over SSH were later added on request)
 
 ## Autonomy 
 I don't know rust, so don't ask me about programming decisions, only ask me about features and when something needs to be tested. If you really need to ask something about rust or programming then explain it to me in easy to understand language so that with that information I can give you a good answer to help reach the end result software that I want to create.
