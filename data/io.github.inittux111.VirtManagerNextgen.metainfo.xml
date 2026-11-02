@@ -43,6 +43,27 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.1.0" date="2026-11-02">
+      <description>
+        <ul>
+          <li>Debian tests start their own test screen</li>
+          <li>Overview: rename button next to Name; Apply keeps working after a rename</li>
+          <li>Feature lists: remote computers over SSH in every list</li>
+          <li>PLAN.md: health review items; remote hosts over SSH no longer under decided against</li>
+          <li>XML random tests: pick returns copies (clean for both Rust 1.92 and current clippy)</li>
+          <li>Log file for bug reports, minimum Rust version check, DEVELOPING.md</li>
+          <li>Split the three largest UI files into folders of smaller modules</li>
+          <li>Harden input handling found in a health review; stress tests for the XML parser</li>
+          <li>Weekly security check: cargo audit on GitHub; README: security updates</li>
+          <li>README: use at your own risk right below the description</li>
+          <li>README: use at your own risk says written from scratch</li>
+          <li>README: based on virt-manager, aiming for a more modern-looking virt-manager</li>
+          <li>README: Arch package in the release, makepkg on Arch</li>
+          <li>Arch PKGBUILD: real version, kept in step by new-version.sh; makepkg on Arch</li>
+          <li>Unofficial Arch Linux package (not tested): PKGBUILD and build-arch.sh</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-10-29">
       <description>
         <ul>

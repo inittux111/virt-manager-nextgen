@@ -5,7 +5,7 @@
 # ./build-arch.sh builds it in an Arch container. pkgver follows the app's
 # version (packaging/new-version.sh updates it).
 pkgname=virt-manager-nextgen
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Manage QEMU/KVM virtual machines through libvirt (unofficial, untested Arch build)"
 arch=('x86_64')

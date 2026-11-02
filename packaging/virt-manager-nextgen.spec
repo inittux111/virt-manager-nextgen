@@ -7,7 +7,7 @@
 %global app_id io.github.inittux111.VirtManagerNextgen
 
 Name:           virt-manager-nextgen
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Create, run and manage QEMU/KVM virtual machines
 
@@ -92,6 +92,23 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xm
 %{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 
 %changelog
+* Mon Nov 02 2026 Maarten <github@feedmebits.nl> - 1.1.0-1
+- Debian tests start their own test screen
+- Overview: rename button next to Name; Apply keeps working after a rename
+- Feature lists: remote computers over SSH in every list
+- PLAN.md: health review items; remote hosts over SSH no longer under decided against
+- XML random tests: pick returns copies (clean for both Rust 1.92 and current clippy)
+- Log file for bug reports, minimum Rust version check, DEVELOPING.md
+- Split the three largest UI files into folders of smaller modules
+- Harden input handling found in a health review; stress tests for the XML parser
+- Weekly security check: cargo audit on GitHub; README: security updates
+- README: use at your own risk right below the description
+- README: use at your own risk says written from scratch
+- README: based on virt-manager, aiming for a more modern-looking virt-manager
+- README: Arch package in the release, makepkg on Arch
+- Arch PKGBUILD: real version, kept in step by new-version.sh; makepkg on Arch
+- Unofficial Arch Linux package (not tested): PKGBUILD and build-arch.sh
+
 * Thu Oct 29 2026 Maarten <github@feedmebits.nl> - 1.0.0-1
 - README: credits
 - README: guest agent and remote computer setup; libguestfs entry clarified
