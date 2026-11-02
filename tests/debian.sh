@@ -18,6 +18,14 @@ sh tests/debian-image.sh "$release" || exit 1
 git ls-files -z --cached --others --exclude-standard | tar --null -T - -c | tar -x -C "$src"
 
 runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# The headless test screen (started here if it isn't running: fedora.sh
+# stops the one it started).
+started_mutter=""
+if [ ! -S "$runtime/vmng-test" ]; then
+    mutter --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display=vmng-test >"$OUT/mutter.log" 2>&1 &
+    started_mutter=$!
+    sleep 3
+fi
 # --privileged (still within this user's rootless namespace) lets libvirt set
 # up the test network's bridge inside the container.
 podman run --rm --name vmng-test-debian \
@@ -26,5 +34,6 @@ podman run --rm --name vmng-test-debian \
     -v "$runtime/vmng-test:/run/vmng/vmng-test" \
     -v "$src:/src" -v "$OUT:/out" -v virt-manager-nextgen-cargo:/cargo \
     "localhost/virt-manager-nextgen-debian-test:$release" sh /src/tests/debian-inside.sh
+[ -n "$started_mutter" ] && kill "$started_mutter"
 rm -rf "$src"
 ! grep -q '^FAIL' "$OUT/results.txt"
