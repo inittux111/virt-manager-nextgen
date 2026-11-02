@@ -105,7 +105,7 @@ fn group(title: &str) -> adw::PreferencesGroup {
     adw::PreferencesGroup::builder().title(title).build()
 }
 
-fn fact(group: &adw::PreferencesGroup, title: &str, value: &str) {
+fn fact(group: &adw::PreferencesGroup, title: &str, value: &str) -> adw::ActionRow {
     let row = adw::ActionRow::builder().title(title).build();
     let label = gtk::Label::builder()
         .label(if value.is_empty() { "—" } else { value })
@@ -117,6 +117,7 @@ fn fact(group: &adw::PreferencesGroup, title: &str, value: &str) {
         .build();
     row.add_suffix(&label);
     group.add(&row);
+    row
 }
 
 /// A drop-down bound to a value. Unknown current values are kept as an

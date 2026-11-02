@@ -135,7 +135,11 @@ virsh -c "$VM_URI" define "$OUT/vmng-test-autostart.xml" >"$OUT/autostart.log" 2
 check screen-autostart screen autostart VMNG_DEV_SELECT=vmng-test-autostart VMNG_DEV_ACTION=vm.hardware \
     VMNG_DEV_HW_ROW=2 VMNG_DEV_AUTOSTART=1
 check autostart-saved sh -c "virsh -c '$VM_URI' dominfo vmng-test-autostart | grep -qiE 'autostart: +enable'"
-virsh -c "$VM_URI" undefine vmng-test-autostart >>"$OUT/autostart.log" 2>&1
+# Regression: Apply must still work after renaming with the Hardware tab open.
+check screen-rename-then-apply screen rename-then-apply VMNG_DEV_SELECT=vmng-test-autostart VMNG_DEV_ACTION=vm.hardware \
+    VMNG_DEV_HW_ROW=0 VMNG_DEV_HW_RENAME=vmng-test-renamed VMNG_DEV_HW_MEMORY=300 VMNG_SCREENSHOT_DELAY=12
+check regression-apply-after-rename sh -c "virsh -c '$VM_URI' dumpxml --inactive vmng-test-renamed | grep -q '<memory unit=.KiB.>307200<'"
+virsh -c "$VM_URI" undefine vmng-test-renamed >>"$OUT/autostart.log" 2>&1
 
 # Another computer over SSH: connect from the Add Remote Computer dialog,
 # see its machines and a machine's screen through the SSH tunnel, remove it.

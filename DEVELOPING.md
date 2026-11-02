@@ -116,6 +116,7 @@ point `XDG_CONFIG_HOME` at a folder without `gtk-4.0/gtk.css`.
 | `VMNG_DEV_HW_ADD=1`, `VMNG_DEV_HW_ADD_CLICK=1` | Open Add Hardware, press Add |
 | `VMNG_DEV_HW_REMOVE=1` | Remove the selected device |
 | `VMNG_DEV_HW_MEMORY=<MiB>` | Edit memory and Apply (saves: `vmng-test-…` VMs only) |
+| `VMNG_DEV_HW_RENAME=<name>` | Rename the machine with the Hardware tab open; `VMNG_DEV_HW_MEMORY` then applies after it (`vmng-test-…` VMs only) |
 | `VMNG_DEV_HW_ALL_CLEAN=1` | Open every page; panic if merely looking counts as a change |
 | `VMNG_DEV_AUTOSTART=1` | Boot & firmware: turn autostart on |
 | `VMNG_DEV_CDROM_FILE=<path>` | CD-ROM editor: act as if that file was chosen |

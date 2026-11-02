@@ -7,7 +7,17 @@ use super::*;
 pub fn overview(bind: &Bind) -> gtk::Box {
     let b = vbox();
     let g = group("Machine");
-    fact(&g, "Name", &bind.get(|e| e.find_text("name").unwrap_or_default()));
+    // The same action as Rename… in the machine's menu, so it asks and
+    // checks the same way and is only available while the machine is off.
+    let rename = gtk::Button::builder()
+        .icon_name("document-edit-symbolic")
+        .tooltip_text("Rename…")
+        .action_name("vm.rename")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    rename.update_property(&[gtk::accessible::Property::Label("Rename")]);
+    fact(&g, "Name", &bind.get(|e| e.find_text("name").unwrap_or_default())).add_suffix(&rename);
     fact(&g, "UUID", &bind.get(|e| e.find_text("uuid").unwrap_or_default()));
     let title = entry(
         bind,
@@ -17,7 +27,9 @@ pub fn overview(bind: &Bind) -> gtk::Box {
     );
     g.add(&title);
     b.append(&g);
-    b.append(&note("The title is shown instead of the name in the list. Use Rename… to change the name."));
+    b.append(&note(
+        "The title is shown instead of the name in the list. The name can be changed while the machine is shut off.",
+    ));
 
     let d = group("Description");
     let buffer = gtk::TextBuffer::new(None);

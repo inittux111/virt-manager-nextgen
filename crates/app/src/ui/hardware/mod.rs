@@ -319,7 +319,30 @@ impl HardwareView {
             self.state.borrow_mut().uuid = Some(vm.uuid.clone());
             self.state.borrow_mut().selected = None;
             self.load();
+        } else {
+            self.follow_rename(&vm.config.name);
         }
+    }
+
+    /// Carries a new name over to the loaded XML, keeping unsaved edits.
+    /// Saving refuses a name that differs from the machine's, so without
+    /// this every Apply after a rename would fail.
+    fn follow_rename(self: &Rc<Self>, name: &str) {
+        {
+            let mut st = self.state.borrow_mut();
+            let Some(base) = st.base.as_mut() else { return };
+            if base.find_text("name").as_deref() == Some(name) {
+                return;
+            }
+            if let Some(n) = base.child_mut("name") {
+                n.set_text(name);
+            }
+        }
+        if let Some(n) = self.work.borrow_mut().child_mut("name") {
+            n.set_text(name);
+        }
+        self.update_labels();
+        self.show_editor();
     }
 
     fn is_editable_item(&self) -> bool {
@@ -479,17 +502,37 @@ impl HardwareView {
             self.check_pages_clean(0);
         }
         // VMNG_DEV_HW_MEMORY=<MiB>: change memory through the editor binding and Apply.
-        if let Some(mib) = std::env::var("VMNG_DEV_HW_MEMORY").ok().and_then(|v| v.parse::<u64>().ok()) {
-            self.bind(Target::Domain).set(|e| {
-                for n in ["memory", "currentMemory"] {
-                    let m = e.child_or_insert(n);
-                    m.set_attr("unit", "KiB");
-                    m.set_text((mib * 1024).to_string());
+        let memory = std::env::var("VMNG_DEV_HW_MEMORY").ok().and_then(|v| v.parse::<u64>().ok());
+        // VMNG_DEV_HW_RENAME=<name>: rename the machine; the memory change
+        // above then comes after it, with the same page still open.
+        if let Ok(name) = std::env::var("VMNG_DEV_HW_RENAME") {
+            let Some((conn, uuid)) = self.conn_uuid() else { return };
+            let weak = Rc::downgrade(self);
+            glib::spawn_future_local(async move {
+                conn.call(move |c| c.rename_domain(&uuid, &name)).await.expect("rename");
+                let Some(this) = weak.upgrade() else { return };
+                (this.on_changed)();
+                glib::timeout_future(std::time::Duration::from_secs(3)).await;
+                if let Some(mib) = memory {
+                    this.dev_set_memory(mib);
                 }
             });
-            assert!(self.is_dirty() && self.apply_bar.reveals_child());
-            self.save();
+        } else if let Some(mib) = memory {
+            self.dev_set_memory(mib);
         }
+    }
+
+    #[cfg(debug_assertions)]
+    fn dev_set_memory(self: &Rc<Self>, mib: u64) {
+        self.bind(Target::Domain).set(|e| {
+            for n in ["memory", "currentMemory"] {
+                let m = e.child_or_insert(n);
+                m.set_attr("unit", "KiB");
+                m.set_text((mib * 1024).to_string());
+            }
+        });
+        assert!(self.is_dirty() && self.apply_bar.reveals_child());
+        self.save();
     }
 
     #[cfg(debug_assertions)]
