@@ -20,7 +20,7 @@ vmng-display = { path = "crates/display" }
 gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
 # Thin, official bindings to the libvirt C library (the only way to talk to libvirt).
-virt = { version = "0.4.3", features = ["qemu"] }
+virt = { version = "0.5.0", features = ["qemu"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
