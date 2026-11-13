@@ -1,5 +1,5 @@
 # The light version of ./test-pipeline.sh: code checks, unit tests, regression
-# tests and a full build on Fedora 44 and Debian 13, on every push and pull request (including
+# tests and a full build on Fedora 45 and Debian 13, on every push and pull request (including
 # Dependabot's). The VM and screen tests run locally with ./test-pipeline.sh.
 name: Build and test
 
@@ -21,9 +21,9 @@ permissions:
 
 jobs:
   fedora:
-    name: Fedora 44
+    name: Fedora 45
     runs-on: ubuntu-latest
-    container: registry.fedoraproject.org/fedora:44
+    container: registry.fedoraproject.org/fedora:45
     steps:
       - name: Build tools and libraries
         run: >
@@ -37,7 +37,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: fedora44-${{ hashFiles('Cargo.lock') }}
+          key: fedora45-${{ hashFiles('Cargo.lock') }}
       - name: Formatting
         run: cargo fmt --all --check
       - name: Lint

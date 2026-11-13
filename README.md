@@ -134,7 +134,7 @@ newer.
 git clone git@github.com:inittux111/virt-manager-nextgen.git
 cd virt-manager-nextgen
 ./build-rpm.sh
-sudo dnf install ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-<version>-1.fc44.x86_64.rpm
+sudo dnf install ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-<version>-1.fc45.x86_64.rpm
 ```
 
 The first run creates a toolbox container called `virt-manager-nextgen`
@@ -190,7 +190,7 @@ podman volume rm virt-manager-nextgen-cargo
 There is an **unofficial** Arch Linux package recipe
 (`packaging/arch/PKGBUILD`). It **is not tested**: the package is known to
 build, but the app isn't checked on Arch by the test pipeline, and Arch's
-fast-moving updates can break it at any time. Fedora 44 and Debian 13 are the
+fast-moving updates can break it at any time. Fedora 45 and Debian 13 are the
 supported systems.
 
 The [latest release](https://github.com/inittux111/virt-manager-nextgen/releases/latest)
@@ -275,8 +275,8 @@ One command checks that every feature still works, on both systems
 [DEVELOPING.md](DEVELOPING.md)):
 
 ```sh
-./test-pipeline.sh            # Fedora 44 and Debian 13
-./test-pipeline.sh fedora     # Fedora 44 only
+./test-pipeline.sh            # Fedora 45 and Debian 13
+./test-pipeline.sh fedora     # Fedora 45 only
 ./test-pipeline.sh debian     # Debian 13 only
 ```
 
@@ -326,7 +326,7 @@ For each system it runs:
 
 Where it runs:
 
-- **Fedora 44** on this computer: code checks in the toolbox, VMs on your
+- **Fedora 45** on this computer: code checks in the toolbox, VMs on your
   user session, and the network/pool check on the System connection.
 - **Debian 13** entirely inside a Debian 13 container with Debian's own
   libvirt, QEMU, UEFI firmware and TPM software (using this computer's KVM).
@@ -334,7 +334,7 @@ Where it runs:
 
 Everything the tests create is named `vmng-test-…` and removed again. The
 summary at the end lists what passed and failed; logs and screenshots are in
-`target/test-report/fedora44/` and `target/test-report/debian13/`. The
+`target/test-report/fedora45/` and `target/test-report/debian13/`. The
 screens use a headless test display (started automatically), so nothing
 appears on your desktop. A full run takes about 10 minutes; the first
 Debian run takes longer while it downloads Debian's packages.
@@ -346,7 +346,7 @@ things feel on a real Debian desktop.
 
 A light version runs automatically on GitHub on every push and pull request
 (`.github/workflows/ci.yml`): formatting, the lint check, unit tests, the
-regression tests and a full build, for Fedora 44 and Debian 13 (about 5
+regression tests and a full build, for Fedora 45 and Debian 13 (about 5
 minutes). Changes to only `.md` files (like this README) don't start it. The repository
 page shows a green or red mark for the latest code, and GitHub emails you
 when it fails. The VM and screen tests need this computer's KVM, so they
@@ -358,7 +358,7 @@ vulnerable crates, and once a week a pull request with all compatible crate
 updates; each is built and tested on both systems before it is merged. It
 also keeps the workflow's GitHub Actions current. The system libraries
 (GTK, libvirt, …) come from Fedora and Debian and are updated with the
-normal system updates; the GitHub check always uses the newest Fedora 44
+normal system updates; the GitHub check always uses the newest Fedora 45
 and Debian 13 images, so an update that breaks the build shows up there.
 
 ### Security updates

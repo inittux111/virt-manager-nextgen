@@ -1,18 +1,18 @@
 #!/bin/sh
-# Fedora 44 tests (see test-pipeline.sh): code checks and unit tests in the
+# Fedora 45 tests (see test-pipeline.sh): code checks and unit tests in the
 # toolbox, then the shared suite on this computer against the user session
 # (and the System connection for the vmng-test network/pool check).
 set -u
 
 cd "$(dirname "$0")/.."
-OUT="$PWD/target/test-report/fedora44"
+OUT="$PWD/target/test-report/fedora45"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 . tests/lib.sh
 box=virt-manager-nextgen
 inbox() { toolbox run -c "$box" env CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:/usr/bin:/bin "$@"; }
 
-echo "== Fedora 44"
+echo "== Fedora 45"
 check code-format inbox cargo fmt --all --check
 check lint inbox cargo clippy --workspace --all-targets -- -D warnings
 check lint-debian13-variant inbox cargo clippy -p virt-manager-nextgen --all-targets --no-default-features -- -D warnings

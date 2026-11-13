@@ -1,12 +1,12 @@
 #!/bin/sh
-# The test pipeline: checks that every feature still works on Fedora 44 and
+# The test pipeline: checks that every feature still works on Fedora 45 and
 # Debian 13. Run it on the host (Fedora, with toolbox and podman):
 #
 #   ./test-pipeline.sh            both
-#   ./test-pipeline.sh fedora     Fedora 44 only
+#   ./test-pipeline.sh fedora     Fedora 45 only
 #   ./test-pipeline.sh debian     Debian 13 only
 #
-# Fedora 44: code checks and unit tests in the toolbox, then throwaway VMs on
+# Fedora 45: code checks and unit tests in the toolbox, then throwaway VMs on
 # your user session (the network check uses the System connection), and
 # screenshots of every main screen. Debian 13: the same, inside a Debian 13
 # container with Debian's own libvirt and QEMU. Everything the tests create
@@ -31,7 +31,7 @@ done
 
 echo "== Summary"
 for t in $targets; do
-    case $t in fedora) dir=fedora44 label="Fedora 44" ;; debian) dir=debian13 label="Debian 13" ;; esac
+    case $t in fedora) dir=fedora45 label="Fedora 45" ;; debian) dir=debian13 label="Debian 13" ;; esac
     results="target/test-report/$dir/results.txt"
     if [ -f "$results" ]; then
         pass=$(grep -c '^PASS' "$results")

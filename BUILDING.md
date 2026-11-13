@@ -10,7 +10,7 @@ From the project folder (`~/Git/claude/virt-manager-nextgen`):
 
 ```sh
 ./build-rpm.sh
-sudo dnf install ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-<version>-1.fc44.x86_64.rpm
+sudo dnf install ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-<version>-1.fc45.x86_64.rpm
 ```
 
 The script prints the exact `dnf` command at the end, so you can copy it
@@ -115,7 +115,7 @@ you've built stays in `target/rpmbuild/RPMS/x86_64/`. To go back to an
 older one:
 
 ```sh
-sudo dnf downgrade ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-<older version>-1.fc44.x86_64.rpm
+sudo dnf downgrade ./target/rpmbuild/RPMS/x86_64/virt-manager-nextgen-<older version>-1.fc45.x86_64.rpm
 ```
 
 ## Removing the app
