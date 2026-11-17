@@ -8,8 +8,6 @@
 //! Usage: `selftest <empty-directory>`
 
 use virt::connect::Connect;
-use virt::domain::Domain;
-use virt::storage_pool::StoragePool;
 use virt::storage_vol::StorageVol;
 use vmng_virt::{CloneDiskMode, Connection, ConnectionKind, SnapshotLocation, SnapshotOptions};
 
@@ -22,8 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let uri = std::env::var("VMNG_TEST_URI").unwrap_or_else(|_| "qemu:///session".into());
     let raw = Connect::open(Some(&uri))?;
     let dir = std::env::args().nth(1).ok_or("usage: selftest <empty-directory>")?;
-    let pool = StoragePool::create_xml(
-        &raw,
+    let pool = raw.create_storage_pool_xml(
         &format!("<pool type='dir'><name>{NAME}-pool</name><target><path>{dir}</path></target></pool>"),
         0,
     )?;
@@ -34,9 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         0,
     )?;
-    let path = vol.get_path()?;
-    let dom = Domain::define_xml(
-        &raw,
+    let path = vol.path()?;
+    let dom = raw.define_domain_xml(
         &format!(
             "<domain type='kvm'><name>{NAME}</name><memory unit='MiB'>128</memory><vcpu>1</vcpu>\
              <os><type arch='x86_64' machine='q35'>hvm</type></os><devices>\
@@ -45,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              </devices></domain>"
         ),
     )?;
-    let uuid = dom.get_uuid_string()?;
+    let uuid = dom.uuid_string()?;
     let conn = Connection::open(ConnectionKind::from_uri(&uri))?;
 
     let run = || -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         conn.rename_domain(&clone_uuid, &format!("{NAME}-renamed"))?;
         let failed = conn.delete_domain(&clone_uuid, std::slice::from_ref(&clone_disk))?;
         assert!(failed.is_empty(), "{failed:?}");
-        assert!(StorageVol::lookup_by_path(&raw, &clone_disk).is_err());
+        assert!(raw.lookup_storage_vol_by_path(&clone_disk).is_err());
         println!("delete ok");
         Ok(())
     };
@@ -110,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean up whatever is left.
     for name in [format!("{NAME}-clone"), format!("{NAME}-renamed")] {
-        if let Ok(d) = Domain::lookup_by_name(&raw, &name) {
+        if let Ok(d) = raw.lookup_domain_by_name(&name) {
             let _ = d.undefine_flags(2);
         }
     }

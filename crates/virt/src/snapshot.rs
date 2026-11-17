@@ -1,6 +1,6 @@
 //! Domain snapshots.
 
-use virt::domain_snapshot::DomainSnapshot;
+use virt::domain::Domain;
 use vmng_xml::Element;
 
 use crate::config::DomainConfig;
@@ -177,7 +177,7 @@ impl Connection {
         let dom = self.domain(uuid)?;
         let mut out = Vec::new();
         for snap in dom.list_all_snapshots(0)? {
-            let xml = vmng_xml::parse(&snap.get_xml_desc(0)?)?;
+            let xml = vmng_xml::parse(&snap.xml_desc(0)?)?;
             let current = snap.is_current(0).unwrap_or(false);
             let children = snap.num_children(0).unwrap_or(0);
             out.push(SnapshotInfo::from_xml(&xml, current, children));
@@ -189,7 +189,7 @@ impl Connection {
     /// Which kinds of snapshot the machine can take.
     pub fn snapshot_modes(&self, uuid: &str) -> Result<SnapshotModes> {
         let dom = self.domain(uuid)?;
-        let config = DomainConfig::from_xml(&vmng_xml::parse(&dom.get_xml_desc(0)?)?);
+        let config = DomainConfig::from_xml(&vmng_xml::parse(&dom.xml_desc(0)?)?);
         let location = snapshot_location(&config);
         Ok(SnapshotModes { internal: location == SnapshotLocation::Internal, default: location })
     }
@@ -207,7 +207,7 @@ impl Connection {
     ) -> Result<()> {
         validate_snapshot_name(name).map_err(|m| Error::Invalid(m.to_owned()))?;
         let dom = self.domain(uuid)?;
-        let config = DomainConfig::from_xml(&vmng_xml::parse(&dom.get_xml_desc(0)?)?);
+        let config = DomainConfig::from_xml(&vmng_xml::parse(&dom.xml_desc(0)?)?);
         let running = dom.is_active()?;
         let location = options.map_or_else(|| snapshot_location(&config), |o| o.location);
         if location == SnapshotLocation::Internal && snapshot_location(&config) != SnapshotLocation::Internal {
@@ -222,30 +222,30 @@ impl Connection {
         if location == SnapshotLocation::External && !running {
             flags |= CREATE_DISK_ONLY;
         }
-        DomainSnapshot::create_xml(&dom, &xml, flags)?;
+        dom.create_snapshot_xml(&xml, flags)?;
         Ok(())
     }
 
     /// Returns the machine to a snapshot.
     pub fn revert_snapshot(&self, uuid: &str, name: &str) -> Result<()> {
         let dom = self.domain(uuid)?;
-        DomainSnapshot::lookup_by_name(&dom, name, 0)?.revert(0)?;
+        Domain::lookup_snapshot_by_name(&dom, name, 0)?.revert(0)?;
         Ok(())
     }
 
     /// Deletes a snapshot. Its children are kept and re-parented.
     pub fn delete_snapshot(&self, uuid: &str, name: &str) -> Result<()> {
         let dom = self.domain(uuid)?;
-        DomainSnapshot::lookup_by_name(&dom, name, 0)?.delete(0)?;
+        Domain::lookup_snapshot_by_name(&dom, name, 0)?.delete(0)?;
         Ok(())
     }
 
     /// Changes the description of a snapshot (libvirt cannot rename them).
     pub fn set_snapshot_description(&self, uuid: &str, name: &str, description: &str) -> Result<()> {
         let dom = self.domain(uuid)?;
-        let snap = DomainSnapshot::lookup_by_name(&dom, name, 0)?;
+        let snap = Domain::lookup_snapshot_by_name(&dom, name, 0)?;
         let current = snap.is_current(0).unwrap_or(false);
-        let mut xml = vmng_xml::parse(&snap.get_xml_desc(XML_SECURE)?)?;
+        let mut xml = vmng_xml::parse(&snap.xml_desc(XML_SECURE)?)?;
         xml.remove_children(|e| e.name == "description");
         if !description.trim().is_empty() {
             xml.children.insert(1, vmng_xml::Node::Element(Element::new("description").with_text(description.trim())));
@@ -254,7 +254,7 @@ impl Connection {
         if current {
             flags |= CREATE_CURRENT;
         }
-        DomainSnapshot::create_xml(&dom, &xml.to_xml(), flags)?;
+        dom.create_snapshot_xml(&xml.to_xml(), flags)?;
         Ok(())
     }
 }

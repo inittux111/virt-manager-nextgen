@@ -1,7 +1,6 @@
 //! Storage pools and volumes.
 
 use virt::storage_pool::StoragePool;
-use virt::storage_vol::StorageVol;
 use vmng_xml::Element;
 
 use crate::connection::Connection;
@@ -136,8 +135,8 @@ pub fn pool_xml(p: &NewPool) -> std::result::Result<Element, &'static str> {
 }
 
 fn details(pool: &StoragePool) -> Result<PoolDetails> {
-    let xml = vmng_xml::parse(&pool.get_xml_desc(0)?)?;
-    let info = pool.get_info()?;
+    let xml = vmng_xml::parse(&pool.xml_desc(0)?)?;
+    let info = pool.info()?;
     let type_name = xml.attr("type").unwrap_or_default().to_owned();
     let src = xml.child("source");
     let source = src.and_then(|s| {
@@ -154,11 +153,11 @@ fn details(pool: &StoragePool) -> Result<PoolDetails> {
         }
     });
     Ok(PoolDetails {
-        name: pool.get_name()?,
+        name: pool.name()?,
         kind: PoolKind::from_type(&type_name),
         type_name,
         active: pool.is_active().unwrap_or(false),
-        autostart: pool.get_autostart().unwrap_or(false),
+        autostart: pool.autostart().unwrap_or(false),
         persistent: pool.is_persistent().unwrap_or(true),
         path: xml.find_text("target/path"),
         source,
@@ -170,7 +169,7 @@ fn details(pool: &StoragePool) -> Result<PoolDetails> {
 
 impl Connection {
     fn pool(&self, name: &str) -> Result<StoragePool> {
-        StoragePool::lookup_by_name(self.raw(), name).map_err(Error::from)
+        self.raw().lookup_storage_pool_by_name(name).map_err(Error::from)
     }
 
     pub fn pool_details(&self) -> Result<Vec<PoolDetails>> {
@@ -189,13 +188,13 @@ impl Connection {
         let _ = pool.refresh(0);
         let mut out = Vec::new();
         for vol in pool.list_all_volumes(0)? {
-            let Ok(info) = vol.get_info() else { continue };
-            let xml = vol.get_xml_desc(0).ok().and_then(|x| vmng_xml::parse(&x).ok());
+            let Ok(info) = vol.info() else { continue };
+            let xml = vol.xml_desc(0).ok().and_then(|x| vmng_xml::parse(&x).ok());
             let format = xml.as_ref().and_then(|x| x.find_attr("target/format", "type").map(str::to_owned));
             let backing = xml.as_ref().and_then(|x| x.find_text("backingStore/path")).filter(|p| !p.is_empty());
             out.push(VolumeInfo {
-                name: vol.get_name()?,
-                path: vol.get_path()?,
+                name: vol.name()?,
+                path: vol.path()?,
                 capacity: info.capacity,
                 allocation: info.allocation,
                 format,
@@ -210,7 +209,7 @@ impl Connection {
     /// folder), starts it and turns on autostart.
     pub fn create_pool(&self, spec: &NewPool) -> Result<()> {
         let xml = pool_xml(spec).map_err(|m| Error::Invalid(m.into()))?;
-        let pool = StoragePool::define_xml(self.raw(), &xml.to_xml(), 0)?;
+        let pool = self.raw().define_storage_pool_xml(&xml.to_xml(), 0)?;
         // Building only prepares what's missing (e.g. mkdir); LVM groups
         // and remote shares must already exist.
         if matches!(spec.kind, PoolKind::Folder | PoolKind::Nfs) {
@@ -269,7 +268,7 @@ impl Connection {
 
     /// Deletes a volume (its file or logical volume is removed).
     pub fn delete_volume(&self, pool: &str, name: &str) -> Result<()> {
-        StorageVol::lookup_by_name(&self.pool(pool)?, name)?.delete(0)?;
+        self.pool(pool)?.lookup_storage_vol_by_name(name)?.delete(0)?;
         Ok(())
     }
 }

@@ -197,7 +197,7 @@ impl Connection {
     /// The persistent configuration of a domain, including secrets
     /// (graphics passwords), for editing.
     pub fn domain_config_xml(&self, uuid: &str) -> Result<Element> {
-        Ok(vmng_xml::parse(&self.domain(uuid)?.get_xml_desc(XML_SECURE | XML_INACTIVE)?)?)
+        Ok(vmng_xml::parse(&self.domain(uuid)?.xml_desc(XML_SECURE | XML_INACTIVE)?)?)
     }
 
     /// Saves an edited configuration. The UUID must stay the same, so an
@@ -210,11 +210,11 @@ impl Connection {
             Some(u) if u.eq_ignore_ascii_case(uuid) => {}
             _ => return Err(Error::Invalid("The machine's <uuid> can't be changed or removed.".into())),
         }
-        let current = self.domain(uuid)?.get_name()?;
+        let current = self.domain(uuid)?.name()?;
         if xml.find_text("name").as_deref() != Some(current.as_str()) {
             return Err(Error::Invalid("Rename the machine with Rename… instead of editing <name>.".into()));
         }
-        Domain::define_xml(self.raw(), &xml.to_xml())?;
+        self.raw().define_domain_xml(&xml.to_xml())?;
         Ok(())
     }
 

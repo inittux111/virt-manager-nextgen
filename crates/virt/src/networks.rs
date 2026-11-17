@@ -256,22 +256,22 @@ pub fn suggest_subnet(existing: &[NetworkDetails]) -> String {
 
 impl Connection {
     fn network(&self, name: &str) -> Result<Network> {
-        Network::lookup_by_name(self.raw(), name).map_err(Error::from)
+        self.raw().lookup_network_by_name(name).map_err(Error::from)
     }
 
     pub fn network_details(&self) -> Result<Vec<NetworkDetails>> {
         let mut out = Vec::new();
         for net in self.raw().list_all_networks(0)? {
-            let xml = vmng_xml::parse(&net.get_xml_desc(0)?)?;
+            let xml = vmng_xml::parse(&net.xml_desc(0)?)?;
             let persistent = net.is_persistent().unwrap_or(true);
             let mut d = NetworkDetails::from_xml(
                 xml,
                 net.is_active().unwrap_or(false),
-                net.get_autostart().unwrap_or(false),
+                net.autostart().unwrap_or(false),
                 persistent,
             );
             if persistent {
-                d.config = vmng_xml::parse(&net.get_xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
+                d.config = vmng_xml::parse(&net.xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
             }
             out.push(d);
         }
@@ -283,7 +283,7 @@ impl Connection {
     pub fn create_network(&self, settings: &NetworkSettings, autostart: bool) -> Result<()> {
         let mut xml = Element::new("network");
         apply_network_settings(&mut xml, settings).map_err(|m| Error::Invalid(m.into()))?;
-        let net = Network::define_xml(self.raw(), &xml.to_xml())?;
+        let net = self.raw().define_network_xml(&xml.to_xml())?;
         if let Err(e) = net.create() {
             let _ = net.undefine();
             return Err(e.into());
@@ -298,12 +298,12 @@ impl Connection {
     /// until it is restarted.
     pub fn update_network(&self, name: &str, settings: &NetworkSettings) -> Result<()> {
         let net = self.network(name)?;
-        let mut xml = vmng_xml::parse(&net.get_xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
+        let mut xml = vmng_xml::parse(&net.xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
         if settings.name != name {
             return Err(Error::Invalid("Networks can't be renamed.".into()));
         }
         apply_network_settings(&mut xml, settings).map_err(|m| Error::Invalid(m.into()))?;
-        Network::define_xml(self.raw(), &xml.to_xml())?;
+        self.raw().define_network_xml(&xml.to_xml())?;
         Ok(())
     }
 
@@ -311,10 +311,10 @@ impl Connection {
     /// must stay the same. A running network uses it after a restart.
     pub fn define_network_xml(&self, name: &str, xml: &str) -> Result<()> {
         let net = self.network(name)?;
-        let current = vmng_xml::parse(&net.get_xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
+        let current = vmng_xml::parse(&net.xml_desc(1 /* VIR_NETWORK_XML_INACTIVE */)?)?;
         let edited = vmng_xml::parse(xml)?;
         check_network_xml(&current, &edited).map_err(|m| Error::Invalid(m.into()))?;
-        Network::define_xml(self.raw(), &edited.to_xml())?;
+        self.raw().define_network_xml(&edited.to_xml())?;
         Ok(())
     }
 

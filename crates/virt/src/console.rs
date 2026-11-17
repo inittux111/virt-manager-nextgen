@@ -30,13 +30,13 @@ impl std::fmt::Debug for ConsoleStream {
 impl ConsoleStream {
     /// Reads output from the guest. Returns 0 when the console closed.
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        Ok(self.stream.recv(buf)?)
+        Ok(usize::try_from(self.stream.recv(buf)?).unwrap_or(0))
     }
 
     /// Sends input to the guest.
     pub fn write(&self, mut data: &[u8]) -> Result<()> {
         while !data.is_empty() {
-            let n = self.stream.send(data)?;
+            let n = usize::try_from(self.stream.send(data)?).unwrap_or(0);
             if n == 0 {
                 return Err(Error::Invalid("The console was closed.".into()));
             }
@@ -61,7 +61,7 @@ impl Connection {
     /// computer (SSH), a tunnel to the display's port instead.
     pub fn open_graphics_fd(&self, uuid: &str, index: u32) -> Result<OwnedFd> {
         if let Some(target) = self.kind().ssh_target() {
-            let live = vmng_xml::parse(&self.domain(uuid)?.get_xml_desc(0)?)?;
+            let live = vmng_xml::parse(&self.domain(uuid)?.xml_desc(0)?)?;
             let dest = crate::remote::display_address(&live, index as usize)
                 .ok_or_else(|| Error::Invalid("The display isn't listening on the other computer.".into()))?;
             return target.tunnel(&dest);

@@ -333,7 +333,8 @@ where
 
 /// Fetches host CPU and memory counters.
 pub(crate) fn host_stats(conn: &Connect) -> Result<HostStats> {
-    let c = conn.as_ptr();
+    // SAFETY: the pointer is only used while `conn` is borrowed.
+    let c = unsafe { conn.as_ptr() };
     let cpu = node_params::<sys::virNodeCPUStats>(
         // SAFETY: valid connection; VIR_NODE_CPU_STATS_ALL_CPUS = -1.
         |p, n| unsafe { sys::virNodeGetCPUStats(c, -1, p, n, 0) },

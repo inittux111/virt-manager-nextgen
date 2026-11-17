@@ -1,7 +1,6 @@
 //! Creating virtual machines: the request, the XML it becomes, and the
 //! steps to create disks, define and start the machine.
 
-use virt::domain::Domain;
 use vmng_xml::Element;
 
 use crate::connection::Connection;
@@ -368,13 +367,12 @@ impl Connection {
     /// can read it, in the `boot-scratch` pool (made when missing, and
     /// gone again after the daemon restarts). Returns its path.
     pub fn store_boot_file(&self, name: &str, data: &[u8]) -> Result<String> {
-        use virt::storage_pool::StoragePool;
         use virt::storage_vol::StorageVol;
         let name: String = name
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
             .collect();
-        let pool = match StoragePool::lookup_by_name(self.raw(), BOOT_POOL) {
+        let pool = match self.raw().lookup_storage_pool_by_name(BOOT_POOL) {
             Ok(p) => {
                 if !p.is_active()? {
                     p.create(0)?;
@@ -402,11 +400,11 @@ impl Connection {
                     .with_child(el("name").with_text(BOOT_POOL))
                     .with_child(el("target").with_child(el("path").with_text(dir)));
                 // VIR_STORAGE_POOL_CREATE_WITH_BUILD: makes the folder.
-                StoragePool::create_xml(self.raw(), &xml.to_xml(), 1)?
+                self.raw().create_storage_pool_xml(&xml.to_xml(), 1)?
             }
         };
         let _ = pool.refresh(0);
-        if let Ok(old) = StorageVol::lookup_by_name(&pool, &name) {
+        if let Ok(old) = pool.lookup_storage_vol_by_name(&name) {
             old.delete(0)?;
         }
         let vol_xml = el("volume")
@@ -420,7 +418,7 @@ impl Connection {
             let mut rest = data;
             while !rest.is_empty() {
                 // libvirt takes at most 32 MiB per message.
-                let sent = stream.send(&rest[..rest.len().min(1 << 20)])?;
+                let sent = usize::try_from(stream.send(&rest[..rest.len().min(1 << 20)])?).unwrap_or(0);
                 if sent == 0 {
                     return Err(Error::Invalid("The upload of the installer file stopped.".into()));
                 }
@@ -434,12 +432,12 @@ impl Connection {
             return Err(e);
         }
         stream.finish()?;
-        Ok(vol.get_path()?)
+        Ok(vol.path()?)
     }
 
     /// Removes a file stored by [`store_boot_file`](Self::store_boot_file).
     pub fn remove_boot_file(&self, path: &str) {
-        if let Ok(v) = virt::storage_vol::StorageVol::lookup_by_path(self.raw(), path) {
+        if let Ok(v) = self.raw().lookup_storage_vol_by_path(path) {
             let _ = v.delete(0);
         }
     }
@@ -448,7 +446,7 @@ impl Connection {
     /// machine is defined, created disks are removed again.
     pub fn create_vm(&self, vm: &NewVm, start: bool) -> Result<Created> {
         validate_vm_name(&vm.name).map_err(|m| Error::Invalid(m.to_owned()))?;
-        if Domain::lookup_by_name(self.raw(), &vm.name).is_ok() {
+        if self.raw().lookup_domain_by_name(&vm.name).is_ok() {
             return Err(Error::Invalid(format!("A machine called {} already exists.", vm.name)));
         }
         let mut created_disk: Option<String> = None;
@@ -483,25 +481,25 @@ impl Connection {
         } else {
             build_domain_xml(vm, disk_path.as_deref())
         });
-        let dom = match Domain::define_xml(self.raw(), &first.to_xml()) {
+        let dom = match self.raw().define_domain_xml(&first.to_xml()) {
             Ok(d) => d,
             Err(e) => {
                 if let Some(path) = created_disk
-                    && let Ok(v) = virt::storage_vol::StorageVol::lookup_by_path(self.raw(), &path)
+                    && let Ok(v) = self.raw().lookup_storage_vol_by_path(&path)
                 {
                     let _ = v.delete(0);
                 }
                 return Err(e.into());
             }
         };
-        let uuid = dom.get_uuid_string()?;
+        let uuid = dom.uuid_string()?;
         let start_error = if start { dom.create().err().map(Error::from) } else { None };
         let mut restart_after_install = false;
         if network && start {
             // The same machine (same UUID), now booting from its disk.
             let mut after = finish(build_domain_xml(vm, disk_path.as_deref()));
             after.children.insert(1, vmng_xml::Node::Element(el("uuid").with_text(&uuid)));
-            Domain::define_xml(self.raw(), &after.to_xml())?;
+            self.raw().define_domain_xml(&after.to_xml())?;
             restart_after_install = start_error.is_none();
         }
         if let InstallSource::Network(n) = &vm.install {

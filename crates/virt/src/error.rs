@@ -43,7 +43,7 @@ impl std::error::Error for Error {}
 
 impl From<virt::error::Error> for Error {
     fn from(e: virt::error::Error) -> Self {
-        Self::Libvirt { code: e.code() as i32, message: e.message().trim().to_owned() }
+        Self::Libvirt { code: e.code().to_raw() as i32, message: e.message().trim().to_owned() }
     }
 }
 

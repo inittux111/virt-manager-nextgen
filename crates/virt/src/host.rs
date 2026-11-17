@@ -1,7 +1,6 @@
 //! What the host offers: guest architectures, machine types, firmware,
 //! networks, bridges, storage pools and install images.
 
-use virt::storage_pool::StoragePool;
 use vmng_xml::Element;
 
 use crate::connection::{Connection, PoolSummary};
@@ -140,22 +139,22 @@ pub struct InstallImage {
 
 impl Connection {
     pub fn host_caps(&self) -> Result<HostCaps> {
-        Ok(HostCaps::from_xml(&vmng_xml::parse(&self.raw().get_capabilities()?)?))
+        Ok(HostCaps::from_xml(&vmng_xml::parse(&self.raw().capabilities()?)?))
     }
 
     pub fn domain_caps(&self, arch: &str, machine: Option<&str>, virt_type: &str) -> Result<DomainCaps> {
-        let xml = self.raw().get_domain_capabilities(None, Some(arch), machine, Some(virt_type), 0)?;
+        let xml = self.raw().domain_capabilities(None, Some(arch), machine, Some(virt_type), 0)?;
         Ok(DomainCaps::from_xml(&vmng_xml::parse(&xml)?))
     }
 
     pub fn list_networks(&self) -> Result<Vec<NetworkSummary>> {
         let mut out = Vec::new();
         for net in self.raw().list_all_networks(0)? {
-            let xml = vmng_xml::parse(&net.get_xml_desc(0)?)?;
+            let xml = vmng_xml::parse(&net.xml_desc(0)?)?;
             out.push(NetworkSummary {
-                name: net.get_name()?,
+                name: net.name()?,
                 active: net.is_active().unwrap_or(false),
-                autostart: net.get_autostart().unwrap_or(false),
+                autostart: net.autostart().unwrap_or(false),
                 forward: xml.find_attr("forward", "mode").unwrap_or("isolated").to_owned(),
                 bridge: xml.find_attr("bridge", "name").map(str::to_owned),
             });
@@ -174,7 +173,7 @@ impl Connection {
             .unwrap_or_default()
             .iter()
             .filter_map(|i| {
-                let xml = vmng_xml::parse(&i.get_xml_desc(0).ok()?).ok()?;
+                let xml = vmng_xml::parse(&i.xml_desc(0).ok()?).ok()?;
                 (xml.attr("type") == Some("bridge")).then(|| xml.attr("name").unwrap_or_default().to_owned())
             })
             .filter(|n| !n.is_empty() && !n.starts_with("virbr"))
@@ -192,7 +191,7 @@ impl Connection {
             .unwrap_or_default()
             .iter()
             .filter_map(|i| {
-                let xml = vmng_xml::parse(&i.get_xml_desc(0).ok()?).ok()?;
+                let xml = vmng_xml::parse(&i.xml_desc(0).ok()?).ok()?;
                 (xml.attr("type") == Some("ethernet")).then(|| xml.attr("name").unwrap_or_default().to_owned())
             })
             .filter(|n| {
@@ -209,9 +208,9 @@ impl Connection {
     pub fn list_pools(&self) -> Result<Vec<(PoolSummary, Option<String>)>> {
         let mut out = Vec::new();
         for pool in self.raw().list_all_storage_pools(0)? {
-            let name = pool.get_name()?;
-            let info = pool.get_info()?;
-            let path = vmng_xml::parse(&pool.get_xml_desc(0)?).ok().and_then(|x| x.find_text("target/path"));
+            let name = pool.name()?;
+            let info = pool.info()?;
+            let path = vmng_xml::parse(&pool.xml_desc(0)?).ok().and_then(|x| x.find_text("target/path"));
             out.push((
                 PoolSummary {
                     name,
@@ -232,19 +231,19 @@ impl Connection {
         const ACTIVE: u32 = 2;
         let mut out = Vec::new();
         for pool in self.raw().list_all_storage_pools(ACTIVE)? {
-            let pool_name = pool.get_name()?;
+            let pool_name = pool.name()?;
             let _ = pool.refresh(0);
             for vol in pool.list_all_volumes(0).unwrap_or_default() {
-                let Ok(name) = vol.get_name() else { continue };
+                let Ok(name) = vol.name() else { continue };
                 if !name.to_ascii_lowercase().ends_with(".iso") {
                     continue;
                 }
-                let Ok(path) = vol.get_path() else { continue };
+                let Ok(path) = vol.path() else { continue };
                 // Pools pointing at the same folder list the same file twice.
                 if out.iter().any(|i: &InstallImage| i.path == path) {
                     continue;
                 }
-                let size = vol.get_info().map(|i| i.capacity).unwrap_or(0);
+                let size = vol.info().map(|i| i.capacity).unwrap_or(0);
                 out.push(InstallImage { name, path, pool: pool_name.clone(), size });
             }
         }
@@ -267,7 +266,7 @@ impl Connection {
         format: &str,
         options: &VolumeOptions,
     ) -> Result<String> {
-        let pool = StoragePool::lookup_by_name(self.raw(), pool)?;
+        let pool = self.raw().lookup_storage_pool_by_name(pool)?;
         let backing = match &options.backing {
             Some(path) => {
                 if format != "qcow2" {
@@ -283,14 +282,14 @@ impl Connection {
         const PREALLOC_METADATA: u32 = 1;
         let flags = if options.allocate && format == "qcow2" { PREALLOC_METADATA } else { 0 };
         let vol = virt::storage_vol::StorageVol::create_xml(&pool, &xml.to_xml(), flags)?;
-        Ok(vol.get_path()?)
+        Ok(vol.path()?)
     }
 
     /// The image format (`qcow2`, `raw`, …) libvirt reports for a file in
     /// one of its pools.
     pub fn image_format(&self, path: &str) -> Option<String> {
-        let vol = virt::storage_vol::StorageVol::lookup_by_path(self.raw(), path).ok()?;
-        let xml = vmng_xml::parse(&vol.get_xml_desc(0).ok()?).ok()?;
+        let vol = self.raw().lookup_storage_vol_by_path(path).ok()?;
+        let xml = vmng_xml::parse(&vol.xml_desc(0).ok()?).ok()?;
         xml.find_attr("target/format", "type").map(str::to_owned)
     }
 
@@ -304,14 +303,15 @@ impl Connection {
 
     /// Deletes the storage volume at `path` (used to roll back).
     pub fn delete_volume_at(&self, path: &str) -> Result<()> {
-        virt::storage_vol::StorageVol::lookup_by_path(self.raw(), path)?.delete(0)?;
+        self.raw().lookup_storage_vol_by_path(path)?.delete(0)?;
         Ok(())
     }
 
     /// Whether a volume name is free in a pool.
     pub(crate) fn volume_name_free(&self, pool: &str, name: &str) -> bool {
-        StoragePool::lookup_by_name(self.raw(), pool)
-            .map(|p| virt::storage_vol::StorageVol::lookup_by_name(&p, name).is_err())
+        self.raw()
+            .lookup_storage_pool_by_name(pool)
+            .map(|p| p.lookup_storage_vol_by_name(name).is_err())
             .unwrap_or(true)
     }
 }

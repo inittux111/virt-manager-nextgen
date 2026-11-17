@@ -33,7 +33,7 @@ impl Connection {
         let mut buf = vec![0u8; 256 << 10];
         loop {
             let n = match stream.recv(&mut buf) {
-                Ok(n) => n,
+                Ok(n) => usize::try_from(n).unwrap_or(0),
                 Err(e) => {
                     let _ = stream.abort();
                     return Err(e.into());

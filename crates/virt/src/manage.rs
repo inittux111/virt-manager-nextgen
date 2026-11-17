@@ -3,8 +3,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use virt::domain::Domain;
-use virt::storage_pool::StoragePool;
 use virt::storage_vol::StorageVol;
 use vmng_xml::Element;
 
@@ -95,13 +93,13 @@ impl Connection {
     /// Finds the storage volume backing `path`, refreshing pools once if
     /// libvirt does not know the file yet.
     fn volume_by_path(&self, path: &str) -> Result<StorageVol> {
-        if let Ok(v) = StorageVol::lookup_by_path(self.raw(), path) {
+        if let Ok(v) = self.raw().lookup_storage_vol_by_path(path) {
             return Ok(v);
         }
         for pool in self.raw().list_all_storage_pools(2 /* ACTIVE */).unwrap_or_default() {
             let _ = pool.refresh(0);
         }
-        StorageVol::lookup_by_path(self.raw(), path).map_err(|_| {
+        self.raw().lookup_storage_vol_by_path(path).map_err(|_| {
             Error::Invalid(format!(
                 "{path} is not in a storage pool, so it can't be copied or deleted here. Add its folder as a storage pool first."
             ))
@@ -110,8 +108,8 @@ impl Connection {
 
     /// Copies a volume into the same pool under a new name.
     fn copy_volume(&self, source: &StorageVol, new_name: &str, progress: &(dyn Fn(u64) + Sync)) -> Result<StorageVol> {
-        let pool = StoragePool::lookup_by_volume(source)?;
-        let src_xml = vmng_xml::parse(&source.get_xml_desc(0)?)?;
+        let pool = source.lookup_storage_pool()?;
+        let src_xml = vmng_xml::parse(&source.xml_desc(0)?)?;
         let mut vol = Element::new("volume").with_child(Element::new("name").with_text(new_name));
         if let Some(cap) = src_xml.child("capacity") {
             vol.push(cap.clone());
@@ -129,8 +127,8 @@ impl Connection {
             scope.spawn(|| {
                 while !done.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_millis(700));
-                    if let Ok(v) = StorageVol::lookup_by_name(&pool, new_name)
-                        && let Ok(info) = v.get_info()
+                    if let Ok(v) = pool.lookup_storage_vol_by_name(new_name)
+                        && let Ok(info) = v.info()
                     {
                         progress(info.allocation);
                     }
@@ -156,14 +154,14 @@ impl Connection {
         progress: ProgressFn<'_>,
     ) -> Result<String> {
         validate_vm_name(new_name).map_err(|m| Error::Invalid(m.to_owned()))?;
-        if Domain::lookup_by_name(self.raw(), new_name).is_ok() {
+        if self.raw().lookup_domain_by_name(new_name).is_ok() {
             return Err(Error::Invalid(format!("A machine called {new_name} already exists.")));
         }
         let dom = self.domain(uuid)?;
         if dom.is_active()? {
             return Err(Error::Invalid("Shut the machine down before cloning it.".into()));
         }
-        let source = vmng_xml::parse(&dom.get_xml_desc(XML_SECURE | XML_INACTIVE)?)?;
+        let source = vmng_xml::parse(&dom.xml_desc(XML_SECURE | XML_INACTIVE)?)?;
         let mut xml = clone_domain_xml(&source, new_name);
 
         // Work out what to copy and how much data that is.
@@ -191,7 +189,7 @@ impl Connection {
                 Some("volume") => {
                     let pool = disk.find_attr("source", "pool").unwrap_or_default();
                     let vol = disk.find_attr("source", "volume").unwrap_or_default();
-                    StorageVol::lookup_by_name(&StoragePool::lookup_by_name(self.raw(), pool)?, vol)?.get_path()?
+                    self.raw().lookup_storage_pool_by_name(pool)?.lookup_storage_vol_by_name(vol)?.path()?
                 }
                 _ => match disk.find_attr("source", "file").or_else(|| disk.find_attr("source", "dev")) {
                     Some(p) => p.to_owned(),
@@ -203,7 +201,7 @@ impl Connection {
         let nvram = xml.find_text("os/nvram").filter(|p| !p.is_empty());
         let nvram_vol = nvram.as_deref().and_then(|p| self.volume_by_path(p).ok());
 
-        let total: u64 = copies.iter().filter_map(|(_, v, _)| v.get_info().ok()).map(|i| i.allocation).sum();
+        let total: u64 = copies.iter().filter_map(|(_, v, _)| v.info().ok()).map(|i| i.allocation).sum();
         let base_done = std::sync::atomic::AtomicU64::new(0);
         progress(0, total);
 
@@ -211,8 +209,8 @@ impl Connection {
         let result = (|| -> Result<String> {
             let single = copies.len() == 1;
             for (i, vol, path) in &copies {
-                let pool = StoragePool::lookup_by_volume(vol)?;
-                let taken = |n: &str| StorageVol::lookup_by_name(&pool, n).is_ok();
+                let pool = vol.lookup_storage_pool()?;
+                let taken = |n: &str| pool.lookup_storage_vol_by_name(n).is_ok();
                 let vmng_xml::Node::Element(disk) = &devices.children[*i] else { continue };
                 let target = disk.find_attr("target", "dev").unwrap_or("disk");
                 let stem = if single { new_name.to_owned() } else { format!("{new_name}-{target}") };
@@ -220,9 +218,9 @@ impl Connection {
                 let before = base_done.load(Ordering::Relaxed);
                 let report = |bytes: u64| progress((before + bytes).min(total), total);
                 let new_vol = self.copy_volume(vol, &name, &report)?;
-                base_done.fetch_add(vol.get_info().map(|i| i.allocation).unwrap_or(0), Ordering::Relaxed);
+                base_done.fetch_add(vol.info().map(|i| i.allocation).unwrap_or(0), Ordering::Relaxed);
                 progress(base_done.load(Ordering::Relaxed).min(total), total);
-                let new_path = new_vol.get_path()?;
+                let new_path = new_vol.path()?;
                 created.push(new_vol);
 
                 let Some(vmng_xml::Node::Element(d)) = xml.child_mut("devices").and_then(|d| d.children.get_mut(*i))
@@ -246,11 +244,11 @@ impl Connection {
             if let Some(path) = &nvram {
                 let new_path = match &nvram_vol {
                     Some(vol) => {
-                        let pool = StoragePool::lookup_by_volume(vol)?;
-                        let taken = |n: &str| StorageVol::lookup_by_name(&pool, n).is_ok();
+                        let pool = vol.lookup_storage_pool()?;
+                        let taken = |n: &str| pool.lookup_storage_vol_by_name(n).is_ok();
                         let name = unique_file_name(&format!("{new_name}_VARS"), extension(path), taken);
                         let v = self.copy_volume(vol, &name, &|_| {})?;
-                        let p = v.get_path()?;
+                        let p = v.path()?;
                         created.push(v);
                         Some(p)
                     }
@@ -264,8 +262,8 @@ impl Connection {
                 }
             }
 
-            let new = Domain::define_xml(self.raw(), &xml.to_xml())?;
-            Ok(new.get_uuid_string()?)
+            let new = self.raw().define_domain_xml(&xml.to_xml())?;
+            Ok(new.uuid_string()?)
         })();
 
         if result.is_err() {

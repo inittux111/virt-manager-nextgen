@@ -2,7 +2,6 @@
 
 use virt::connect::Connect;
 use virt::domain::Domain;
-use virt::storage_pool::StoragePool;
 
 use crate::config::DomainConfig;
 use crate::domain::{DomainState, DomainSummary, PowerAction};
@@ -120,13 +119,6 @@ impl std::fmt::Debug for Connection {
     }
 }
 
-impl Drop for Connection {
-    fn drop(&mut self) {
-        // Nothing useful can be done if closing fails.
-        let _ = self.conn.close();
-    }
-}
-
 fn version_string(v: u32) -> String {
     format!("{}.{}.{}", v / 1_000_000, (v / 1000) % 1000, v % 1000)
 }
@@ -150,15 +142,15 @@ impl Connection {
     }
 
     pub fn host_info(&self) -> Result<HostInfo> {
-        let node = self.conn.get_node_info()?;
+        let node = self.conn.node_info()?;
         Ok(HostInfo {
-            hostname: self.conn.get_hostname().unwrap_or_default(),
+            hostname: self.conn.hostname().unwrap_or_default(),
             cpu_model: node.model,
             cpus: node.cpus,
             mhz: node.mhz,
             memory: node.memory.saturating_mul(1024),
-            libvirt_version: self.conn.get_lib_version().map(version_string).unwrap_or_default(),
-            hypervisor_version: self.conn.get_hyp_version().map(version_string).unwrap_or_default(),
+            libvirt_version: self.conn.lib_version().map(version_string).unwrap_or_default(),
+            hypervisor_version: self.conn.hyp_version().map(version_string).unwrap_or_default(),
         })
     }
 
@@ -167,18 +159,18 @@ impl Connection {
     }
 
     pub(crate) fn domain(&self, uuid: &str) -> Result<Domain> {
-        Domain::lookup_by_uuid_string(&self.conn, uuid).map_err(Error::from)
+        self.conn.lookup_domain_by_uuid_string(uuid).map_err(Error::from)
     }
 
     fn summarize(dom: &Domain) -> Result<DomainSummary> {
-        let (state, _reason) = dom.get_state()?;
-        let xml = dom.get_xml_desc(0)?;
+        let (state, _reason) = dom.state()?;
+        let xml = dom.xml_desc(0)?;
         let config = DomainConfig::from_xml(&vmng_xml::parse(&xml)?);
         Ok(DomainSummary {
-            uuid: dom.get_uuid_string()?,
-            state: DomainState::from_raw(state),
+            uuid: dom.uuid_string()?,
+            state: DomainState::from_raw(state.to_raw()),
             persistent: dom.is_persistent().unwrap_or(true),
-            autostart: dom.get_autostart().unwrap_or(false),
+            autostart: dom.autostart().unwrap_or(false),
             has_managed_save: dom.has_managed_save(0).unwrap_or(false),
             config,
         })
@@ -213,14 +205,14 @@ impl Connection {
 
     /// Size and usage of a storage pool, or `None` if it does not exist.
     pub fn pool_summary(&self, name: &str) -> Result<Option<PoolSummary>> {
-        let pool = match StoragePool::lookup_by_name(&self.conn, name) {
+        let pool = match self.conn.lookup_storage_pool_by_name(name) {
             Ok(p) => p,
             Err(e) => {
                 let e = Error::from(e);
                 return if e.is_not_found() { Ok(None) } else { Err(e) };
             }
         };
-        let info = pool.get_info()?;
+        let info = pool.info()?;
         Ok(Some(PoolSummary {
             name: name.to_owned(),
             active: pool.is_active().unwrap_or(false),
@@ -233,7 +225,7 @@ impl Connection {
     /// `(allocation, capacity)` in bytes of one of a domain's disks,
     /// identified by its target (e.g. `vda`).
     pub fn disk_usage(&self, uuid: &str, target: &str) -> Result<(u64, u64)> {
-        let info = self.domain(uuid)?.get_block_info(target, 0)?;
+        let info = self.domain(uuid)?.block_info(target, 0)?;
         Ok((info.allocation, info.capacity))
     }
 
@@ -261,7 +253,7 @@ impl Connection {
         }
         details.addresses = v4.into_iter().chain(v6).collect();
         if details.agent_connected {
-            details.hostname = dom.get_hostname(HOSTNAME_AGENT).ok().filter(|h| !h.is_empty());
+            details.hostname = dom.hostname(HOSTNAME_AGENT).ok().filter(|h| !h.is_empty());
             details.info = crate::guest::guest_info(&dom).ok();
         }
         Ok(details)
@@ -271,7 +263,7 @@ impl Connection {
     /// (what the VM will use on its next start) instead of the live one.
     pub fn domain_xml(&self, uuid: &str, inactive: bool) -> Result<String> {
         const XML_INACTIVE: u32 = 2;
-        Ok(self.domain(uuid)?.get_xml_desc(if inactive { XML_INACTIVE } else { 0 })?)
+        Ok(self.domain(uuid)?.xml_desc(if inactive { XML_INACTIVE } else { 0 })?)
     }
 
     /// Performs a lifecycle action.
