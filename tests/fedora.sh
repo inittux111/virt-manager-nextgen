@@ -19,7 +19,8 @@ check lint-debian13-variant inbox cargo clippy -p virt-manager-nextgen --all-tar
 check unit-tests inbox cargo test --workspace
 check regression-tests inbox cargo test -p vmng-virt --test regressions
 check build inbox cargo build --workspace --all-targets
-inbox sh -c ". tests/lib.sh && make_iso '$OUT/test.iso'" >/dev/null 2>&1
+inbox sh -c ". tests/lib.sh && make_iso '$OUT/test.iso'" >/dev/null 2>&1 \
+    || { echo "Could not make the test ISO: install xorriso in the toolbox (sudo dnf install xorriso)." >&2; exit 1; }
 
 # The headless test screen (started here if it isn't running).
 started_mutter=""

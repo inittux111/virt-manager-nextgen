@@ -49,7 +49,7 @@ if ! podman container exists "$box"; then
     release=$(rpm -E %fedora)
     echo "Creating the $box container (Fedora $release)…"
     toolbox create --container "$box" --release "$release"
-    toolbox run -c "$box" sudo dnf -y install rpm-build rpmdevtools git clippy rustfmt 'dnf-command(builddep)'
+    toolbox run -c "$box" sudo dnf -y install rpm-build rpmdevtools git clippy rustfmt xorriso 'dnf-command(builddep)'
     toolbox run -c "$box" sudo dnf -y builddep "$spec"
     # Cargo's cache lives in the container, never in the shared home folder.
     toolbox run -c "$box" sh -c 'sudo mkdir -p /opt/cargo && sudo chown "$(id -u):$(id -g)" /opt/cargo'
